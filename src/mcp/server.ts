@@ -146,6 +146,39 @@ const TOOLS = [
       required: ["query", "taskId"],
     },
   },
+  {
+    name: "list_templates",
+    description: "List available TaskTemplates (pre-built workflow presets).",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "submit_from_template",
+    description: "Instantiate a TaskTemplate and submit it as a new task.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID from list_templates" },
+        substitutions: {
+          type: "object",
+          description: "Key-value pairs to substitute {{placeholders}} in the template",
+        },
+        documentIds: { type: "array", items: { type: "string" } },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "get_round",
+    description: "Get the full RoundState for a specific round of a task.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: { type: "string" },
+        round: { type: "number", description: "Round number (1-based)" },
+      },
+      required: ["taskId", "round"],
+    },
+  },
 ] as const;
 
 // ─── MCP server ───────────────────────────────────────────────────────────────
@@ -240,6 +273,59 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     return orchestrator.registry.listAll();
   });
 
+  // T17: SSE streaming endpoint
+  app.get("/tasks/:id/stream", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const task = orchestrator.getTask(id);
+    if (!task) return reply.status(404).send({ error: "Task not found" });
+
+    reply.raw.setHeader("Content-Type", "text/event-stream");
+    reply.raw.setHeader("Cache-Control", "no-cache");
+    reply.raw.setHeader("Connection", "keep-alive");
+    reply.raw.flushHeaders();
+
+    const send = (type: string, data: unknown) => {
+      reply.raw.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
+    // Send current snapshot immediately
+    send("snapshot", task);
+
+    const handler = ({ type, data }: { type: string; data: unknown }) => {
+      send(type, data);
+      if (type === "complete" || type === "failed") {
+        reply.raw.end();
+        orchestrator.progressEmitter.off(`task:${id}`, handler);
+      }
+    };
+
+    orchestrator.progressEmitter.on(`task:${id}`, handler);
+    req.raw.on("close", () => {
+      orchestrator.progressEmitter.off(`task:${id}`, handler);
+    });
+
+    return reply;
+  });
+
+  // T18: Template REST routes
+  app.get("/templates", async () => orchestrator.listTemplates());
+
+  app.post("/tasks/from-template", async (req, reply) => {
+    const body = req.body as { templateId: string; substitutions?: Record<string, string>; documentIds?: string[] };
+    const task = await orchestrator.submitFromTemplate(body.templateId, body.substitutions, body.documentIds);
+    return reply.status(201).send(task);
+  });
+
+  // T19: get_round REST route
+  app.get("/tasks/:taskId/rounds/:round", async (req, reply) => {
+    const { taskId, round } = req.params as { taskId: string; round: string };
+    const task = orchestrator.getTask(taskId);
+    if (!task) return reply.status(404).send({ error: "Task not found" });
+    const roundState = task.rounds[parseInt(round) - 1];
+    if (!roundState) return reply.status(404).send({ error: "Round not found" });
+    return roundState;
+  });
+
   await app.listen({ port: Config.api.port, host: "0.0.0.0" });
   logger.info("REST API started", { port: Config.api.port });
 }
@@ -298,6 +384,24 @@ async function handleTool(
         agentId: args.agentId as string | undefined,
         topK: args.topK as number | undefined,
       });
+
+    case "list_templates":
+      return orch.listTemplates();
+
+    case "submit_from_template":
+      return orch.submitFromTemplate(
+        args.templateId as string,
+        args.substitutions as Record<string, string> | undefined,
+        args.documentIds as string[] | undefined,
+      );
+
+    case "get_round": {
+      const task = orch.getTask(args.taskId as string);
+      if (!task) throw new Error(`Task not found: ${args.taskId}`);
+      const roundState = task.rounds[(args.round as number) - 1];
+      if (!roundState) throw new Error(`Round ${args.round} not found`);
+      return roundState;
+    }
 
     default:
       throw new Error(`Unknown tool: ${name}`);

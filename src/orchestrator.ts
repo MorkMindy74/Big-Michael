@@ -19,6 +19,8 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { EventEmitter } from "events";
+import { readdir, readFile, writeFile } from "fs/promises";
+import { join, extname } from "path";
 import { v4 as uuidv4 } from "uuid";
 import { Config } from "./config.js";
 import { logger } from "./logger.js";
@@ -28,6 +30,9 @@ import { ROOT_ORCHESTRATOR, ALL_AGENT_DEFINITIONS } from "./agents/definitions.j
 import { DyTopoEngine } from "./dytopo/engine.js";
 import { InterRoundMemoryStore } from "./memory/index.js";
 import { KnowledgeStore } from "./knowledge/index.js";
+import { TemplateStore } from "./templates/store.js";
+import { LaverneAdapter, instantiateTemplate, fromExternalConfig } from "./adapters/laverne.js";
+import type { TaskTemplate, ExternalAgentConfig } from "./adapters/laverne.js";
 import {
   applyCitationGate,
   runDebate,
@@ -59,9 +64,11 @@ export class Orchestrator {
   readonly registry: AgentRegistry;
   readonly memory: InterRoundMemoryStore;
   readonly knowledge: KnowledgeStore;
+  readonly templates: TemplateStore;
 
   private readonly tasks: Map<string, Task> = new Map();
   private readonly gateEmitter = new EventEmitter();
+  readonly progressEmitter = new EventEmitter();
   private engine!: DyTopoEngine;
   private rootAgent!: Agent;
 
@@ -69,6 +76,7 @@ export class Orchestrator {
     this.registry = new AgentRegistry();
     this.memory = new InterRoundMemoryStore();
     this.knowledge = new KnowledgeStore();
+    this.templates = new TemplateStore();
   }
 
   async init(): Promise<void> {
@@ -76,6 +84,7 @@ export class Orchestrator {
       this.registry.init(),
       this.memory.init(),
       this.knowledge.init(),
+      this.templates.load(),
     ]);
 
     // Seed agent registry if empty
@@ -84,6 +93,12 @@ export class Orchestrator {
       logger.info("Seeding agent registry with default agents…");
       await this.registry.registerAll(ALL_AGENT_DEFINITIONS);
     }
+
+    // Load external and Laverne agents from filesystem
+    await this.loadExternalAgents();
+
+    // Restore persisted tasks
+    await this.restoreTasks();
 
     this.rootAgent = new Agent(ROOT_ORCHESTRATOR);
     this.engine = new DyTopoEngine({
@@ -129,6 +144,7 @@ export class Orchestrator {
       logger.error("Task execution failed", { taskId: task.id, error: err.message });
       task.status = "failed";
       task.error = err.message;
+      this.emit(task.id, "failed", { error: err.message });
     });
 
     return task;
@@ -140,6 +156,21 @@ export class Orchestrator {
 
   listTasks(): Task[] {
     return Array.from(this.tasks.values());
+  }
+
+  listTemplates(): TaskTemplate[] {
+    return this.templates.list();
+  }
+
+  async submitFromTemplate(
+    templateId: string,
+    substitutions: Record<string, string> = {},
+    documentIds?: string[],
+  ): Promise<Task> {
+    const template = this.templates.get(templateId);
+    if (!template) throw new Error(`Template not found: ${templateId}`);
+    const { description, workflowType } = instantiateTemplate(template, substitutions);
+    return this.submitTask({ description, workflowType, documentIds });
   }
 
   /**
@@ -156,6 +187,7 @@ export class Orchestrator {
     gate.reviewedAt = new Date();
     task.updatedAt = new Date();
     this.gateEmitter.emit(`gates:${taskId}`);
+    this.persistTasks().catch((err) => logger.warn("Failed to persist tasks", { error: err.message }));
   }
 
   rejectGate(taskId: string, gateId: string, reason: string): void {
@@ -169,17 +201,66 @@ export class Orchestrator {
     task.findings = task.findings.filter((f) => f.id !== gate.findingId);
     task.updatedAt = new Date();
     this.gateEmitter.emit(`gates:${taskId}`);
+    this.persistTasks().catch((err) => logger.warn("Failed to persist tasks", { error: err.message }));
+  }
+
+  // ─── External agent loader ────────────────────────────────────────────────
+
+  private async loadExternalAgents(): Promise<void> {
+    const dirs: Array<{ path: string; type: "external" | "laverne" }> = [
+      { path: join(process.cwd(), "agents", "external"), type: "external" },
+      { path: join(process.cwd(), "agents", "laverne"), type: "laverne" },
+    ];
+
+    const laverneAdapter = new LaverneAdapter();
+
+    for (const { path: dir, type } of dirs) {
+      let entries: string[];
+      try {
+        entries = await readdir(dir);
+      } catch {
+        continue; // directory doesn't exist or isn't readable — skip silently
+      }
+
+      const defs = [];
+      for (const entry of entries) {
+        if (extname(entry) !== ".json") continue;
+        try {
+          const raw = await readFile(join(dir, entry), "utf8");
+          const parsed = JSON.parse(raw);
+          const items = Array.isArray(parsed) ? parsed : [parsed];
+          if (type === "laverne") {
+            defs.push(...laverneAdapter.fromConfigs(items));
+          } else {
+            defs.push(...(items as ExternalAgentConfig[]).map(fromExternalConfig));
+          }
+        } catch (err) {
+          logger.warn("Failed to load external agent file", { file: entry, error: (err as Error).message });
+        }
+      }
+
+      if (defs.length) {
+        await this.registry.registerAll(defs);
+        logger.info("External agents registered", { source: type, count: defs.length });
+      }
+    }
   }
 
   // ─── Internal task runner ─────────────────────────────────────────────────
 
+  private emit(taskId: string, type: string, data: unknown): void {
+    this.progressEmitter.emit(`task:${taskId}`, { type, data });
+  }
+
   private async runTask(task: Task): Promise<void> {
     task.status = "running";
+    this.emit(task.id, "started", { taskId: task.id, workflowType: task.workflowType });
     const phases = PHASE_SEQUENCES[task.workflowType];
 
     for (const phase of phases) {
       task.currentPhase = phase;
       task.updatedAt = new Date();
+      this.emit(task.id, "phase", { phase });
       await this.runPhase(task, phase);
 
       // Wait for any pending gates before continuing
@@ -195,6 +276,8 @@ export class Orchestrator {
     task.status = "complete";
     task.completedAt = new Date();
     task.updatedAt = new Date();
+    this.emit(task.id, "complete", { findings: task.findings.length, output: task.output?.slice(0, 200) });
+    this.persistTasks().catch((err) => logger.warn("Failed to persist tasks", { error: err.message }));
 
     logger.info("Task complete", { taskId: task.id, findings: task.findings.length });
   }
@@ -235,6 +318,12 @@ export class Orchestrator {
     task.pendingGates.push(...gates);
 
     task.updatedAt = new Date();
+    this.emit(task.id, "round", {
+      round: task.currentRound,
+      phase,
+      findings: debated.length,
+      gates: gates.length,
+    });
     logger.info("Phase complete", {
       taskId: task.id,
       phase,
@@ -312,6 +401,46 @@ Every claim must trace to a specific finding number from the list above.`;
       }),
     );
     return map;
+  }
+
+  // ─── Persistence ──────────────────────────────────────────────────────────
+
+  async persistTasks(): Promise<void> {
+    const path = Config.persistence.tasksFile;
+    const serialisable = Array.from(this.tasks.values()).map((t) => ({
+      ...t,
+      createdAt: t.createdAt.toISOString(),
+      updatedAt: t.updatedAt.toISOString(),
+      completedAt: t.completedAt?.toISOString(),
+    }));
+    await writeFile(path, JSON.stringify(serialisable, null, 2), "utf8");
+    logger.debug("Tasks persisted", { count: this.tasks.size, path });
+  }
+
+  async restoreTasks(): Promise<void> {
+    const path = Config.persistence.tasksFile;
+    let raw: string;
+    try {
+      raw = await readFile(path, "utf8");
+    } catch {
+      return; // no file yet — first run
+    }
+
+    try {
+      const items = JSON.parse(raw) as Array<Record<string, unknown>>;
+      for (const item of items) {
+        const task = {
+          ...item,
+          createdAt: new Date(item.createdAt as string),
+          updatedAt: new Date(item.updatedAt as string),
+          completedAt: item.completedAt ? new Date(item.completedAt as string) : undefined,
+        } as Task;
+        this.tasks.set(task.id, task);
+      }
+      logger.info("Tasks restored from disk", { count: this.tasks.size, path });
+    } catch (err) {
+      logger.warn("Failed to restore tasks", { error: (err as Error).message });
+    }
   }
 
   private waitForGates(task: Task): Promise<void> {

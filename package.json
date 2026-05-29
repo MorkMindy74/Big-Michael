@@ -10,6 +10,7 @@
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "seed": "tsx src/scripts/seed.ts",
+    "smoke-test": "ANTHROPIC_API_KEY=smoke-test OPENAI_API_KEY=smoke-test tsx src/scripts/smoke-test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts"
   },

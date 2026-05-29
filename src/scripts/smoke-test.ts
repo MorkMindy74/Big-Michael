@@ -110,6 +110,40 @@ check("ollama: prefix detection", isOllamaModel("ollama:llama3.2"));
 check("ollama: prefix stripping", ollamaModelName("ollama:llama3.2") === "llama3.2");
 check("claude model not flagged as ollama", !isOllamaModel("claude-opus-4-8"));
 
+// ─── 6. PDF tools ─────────────────────────────────────────────────────────────
+
+process.stdout.write("\n[6] PDF tools (live Python round-trip)\n");
+const { globalToolRegistry: toolReg } = await import("../tools/index.js");
+check("pdf_generate registered", toolReg.has("pdf_generate"));
+check("pdf_extract_text registered", toolReg.has("pdf_extract_text"));
+check("pdf_extract_tables registered", toolReg.has("pdf_extract_tables"));
+
+// Writing agents should have pdf_generate
+const writingAgents = ALL_AGENT_DEFINITIONS.filter((a) => a.id.includes("drafter"));
+const allHavePdf = writingAgents.every((a) => a.allowedTools.includes("pdf_generate"));
+check(`All ${writingAgents.length} drafter agents have pdf_generate`, allHavePdf);
+
+// Live round-trip: generate a PDF then extract its text
+import { tmpdir } from "os";
+import { join as pathJoin } from "path";
+const tmp = tmpdir();
+const mockCtx = { knowledge: null as never, memory: null as never, taskId: "smoke" };
+const genResult = await toolReg.execute("pdf_generate", {
+  title: "Smoke Test Brief",
+  filename: "smoke-test.pdf",
+  content: "## Introduction\n\nThis is a smoke test document.\n\n## Conclusion\n\nPDF generation works.",
+  output_dir: tmp,
+}, mockCtx) as Record<string, unknown>;
+check("pdf_generate produces a file", typeof genResult.outputPath === "string", JSON.stringify(genResult));
+check("pdf_generate reports pageCount", typeof genResult.pageCount === "number");
+
+if (genResult.outputPath) {
+  const extractResult = await toolReg.execute("pdf_extract_text", { path: genResult.outputPath }, mockCtx) as Record<string, unknown>;
+  check("pdf_extract_text reads back content", typeof extractResult.pageCount === "number");
+  const allText = (extractResult.pages as Array<{text: string}>)?.[0]?.text ?? "";
+  check("pdf_extract_text finds document title", allText.includes("Smoke Test Brief") || allText.includes("Introduction"));
+}
+
 // ─── Summary ──────────────────────────────────────────────────────────────────
 
 process.stdout.write("\n");

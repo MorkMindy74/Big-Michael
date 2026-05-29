@@ -1,0 +1,9 @@
+# PDF tools — required for pdf_extract_text, pdf_extract_tables, pdf_generate
+# Install: pip install -r requirements.txt
+#
+# System requirement for Camelot lattice mode (bordered tables):
+#   apt install ghostscript  OR  brew install ghostscript
+#   Then: pip install "camelot-py[cv]"  (replaces camelot-py[base])
+
+PyMuPDF>=1.23.0
+camelot-py[base]>=0.11.0

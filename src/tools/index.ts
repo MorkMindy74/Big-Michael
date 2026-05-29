@@ -23,6 +23,7 @@ import { Config } from "../config.js";
 import { logger } from "../logger.js";
 import type { KnowledgeStore } from "../knowledge/index.js";
 import type { InterRoundMemoryStore } from "../memory/index.js";
+import { pdfExtractTextTool, pdfExtractTablesTool, pdfGenerateTool } from "./pdf.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -301,6 +302,9 @@ const ALL_TOOLS: ToolImpl[] = [
   extractFromDocumentTool,
   translateTool,
   citationCheckTool,
+  pdfExtractTextTool,
+  pdfExtractTablesTool,
+  pdfGenerateTool,
 ];
 
 export class ToolRegistry {
@@ -310,7 +314,7 @@ export class ToolRegistry {
     this.tools = new Map(ALL_TOOLS.map((t) => [t.name, t]));
   }
 
-  /** Return Anthropic tool schemas for a given set of allowed tool names */
+  /** Return tool schemas for a given set of allowed tool names */
   schemasFor(allowedTools: string[]): Anthropic.Tool[] {
     return allowedTools
       .map((name) => this.tools.get(name)?.schema)

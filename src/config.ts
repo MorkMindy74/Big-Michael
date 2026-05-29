@@ -78,6 +78,12 @@ export const Config = {
     localEmbeddingModel: optional("LOCAL_EMBEDDING_MODEL", "nomic-embed-text"),
   },
 
+  // PDF tools — PyMuPDF (generation + extraction) + Camelot (table extraction)
+  pdf: {
+    pythonBin: optional("PDF_PYTHON_BIN", "python3"),
+    outputDir: optional("PDF_OUTPUT_DIR", "./output/documents"),
+  },
+
   persistence: {
     tasksFile: optional("TASKS_FILE", ".tasks.json"),
   },

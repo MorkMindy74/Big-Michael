@@ -959,7 +959,7 @@ DRAFTING STANDARDS:
 - Pleas must be legally complete — a court cannot fill gaps
 
 Do not include arguments that have not been authorised by the research findings you receive.`,
-    allowedTools: ["search_knowledge", "query_memory"],
+    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text"],
     skills: ["cjeu-pleading", "eu-court-procedure", "formal-legal-writing", "ecli-citation"],
   },
 
@@ -990,7 +990,7 @@ PROCEDURAL RIGHTS:
 - Reasonable time: challenge if SO to response time is insufficient
 
 Tone: formal, evidence-based, legally precise. No concession without express instruction.`,
-    allowedTools: ["search_knowledge", "query_memory"],
+    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text"],
     skills: ["competition-enforcement", "defence-response", "art-102", "commission-procedure"],
   },
 
@@ -1024,7 +1024,7 @@ DRAFTING REQUIREMENTS:
 - Factual accuracy is critical: material false statements void notification
 
 Output: complete, self-contained section drafts; flag where client data is needed.`,
-    allowedTools: ["search_knowledge", "query_memory"],
+    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text"],
     skills: ["merger-control", "form-co", "eumr-procedure", "market-definition-drafting"],
   },
 
@@ -1058,7 +1058,7 @@ KEY CONCEPTS TO ADDRESS:
 - Environmental and energy aid: specific sections for carbon price corrections, renewable energy
 
 Output: complete notification draft flagging data gaps for member state completion.`,
-    allowedTools: ["search_knowledge", "query_memory"],
+    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text"],
     skills: ["state-aid-notification", "sani", "gber-self-assessment", "art-108"],
   },
 
@@ -1097,7 +1097,7 @@ DRAFTING PRINCIPLES:
 - Privilege: identify legally privileged communications; assert appropriately
 
 Output: structured application draft with placeholder tags [CLIENT DATA REQUIRED] for sensitive specifics.`,
-    allowedTools: ["search_knowledge", "query_memory"],
+    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text"],
     skills: ["leniency", "cartel-procedure", "corporate-statement", "immunity-application"],
   },
 
@@ -1131,7 +1131,7 @@ DSAR RESPONSE:
 - Format: structured, human-readable; machine-readable if requested
 
 Tone: co-operative but legally precise; do not admit breach without instruction.`,
-    allowedTools: ["search_knowledge", "query_memory"],
+    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text"],
     skills: ["gdpr-enforcement", "dpa-procedure", "complaint-response", "dsar"],
   },
 
@@ -1166,7 +1166,7 @@ APPLICATION STRUCTURE:
 5. Annex list
 
 INTERIM MEASURES: consider concurrent Art. 278/279 application (urgency; prima facie case; balance of interests).`,
-    allowedTools: ["search_knowledge", "query_memory"],
+    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text"],
     skills: ["art-263", "annulment-action", "standing-analysis", "general-court-procedure"],
   },
 
@@ -1200,7 +1200,7 @@ STYLE:
 - Cite authority in footnotes — not in main text unless the authority is itself the issue
 
 Do not draft this memo in the style of a court submission. It is a commercial advisory.`,
-    allowedTools: ["search_knowledge", "query_memory"],
+    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text"],
     skills: ["client-advice", "memo-writing", "risk-matrix", "commercial-awareness"],
   },
 
@@ -1234,7 +1234,7 @@ TONE:
 - State financial figures in absolute terms, not percentages alone
 - Frame in terms of business risk, not legal doctrine
 - No jargon, no Latin, no footnotes (attach a technical memo if needed)`,
-    allowedTools: ["search_knowledge", "query_memory"],
+    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text"],
     skills: ["board-communication", "risk-briefing", "corporate-governance", "executive-writing"],
   },
 
@@ -1266,7 +1266,7 @@ STRATEGIC NOTES:
 - Timeline: Commission has no fixed decision deadline; follow-up obligations
 
 Output: complete Form C draft with [CONFIDENTIAL] markers; cover letter for submission.`,
-    allowedTools: ["search_knowledge", "query_memory"],
+    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text"],
     skills: ["competition-complaint", "form-c", "commission-procedure", "standing"],
   },
 
@@ -1303,7 +1303,7 @@ TECHNICAL ACCURACY:
 - Note implementation costs and compliance timelines
 
 Output: complete consultation response draft; word count per section; ready for submission.`,
-    allowedTools: ["search_knowledge", "query_memory"],
+    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text"],
     skills: ["consultation-response", "eu-policy", "advocacy-drafting", "impact-assessment"],
   },
 
@@ -1344,7 +1344,7 @@ DATA PROTECTION DD:
 - Existing DPA investigations or enforcement
 
 Output: structured section drafts with [CLIENT DATA] placeholders; ready for partner review.`,
-    allowedTools: ["search_knowledge", "query_memory"],
+    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text"],
     skills: ["due-diligence", "m-and-a", "risk-grading", "spa-drafting", "dd-report"],
   },
 ];
@@ -1393,7 +1393,7 @@ If no results exceed the threshold, state so explicitly — do not fabricate res
 Output as JSON. For each extracted item: field name, extracted value, source document ID, page/section.
 Extraction types: clauses, defined terms, obligations, dates, parties, monetary amounts, conditions.
 Do not infer or interpret — extract only what is explicitly stated.`,
-    allowedTools: ["extract_from_document"],
+    allowedTools: ["extract_from_document", "pdf_extract_text", "pdf_extract_tables"],
     skills: ["structured-extraction", "clause-parsing"],
   },
   {

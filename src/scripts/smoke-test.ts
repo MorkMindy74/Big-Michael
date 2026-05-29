@@ -104,6 +104,12 @@ check("T0 → Opus", selectModel({ tier: 0, taskType: "reasoning" }).includes("o
 check("T3 → Haiku", selectModel({ tier: 3, taskType: "reasoning" }).includes("haiku"));
 check("T1 reasoning → Sonnet", selectModel({ tier: 1, taskType: "reasoning" }).includes("sonnet"));
 
+// Ollama routing — simulate OLLAMA_ENABLED=true by checking prefix logic
+const { isOllamaModel, ollamaModelName } = await import("../providers/index.js");
+check("ollama: prefix detection", isOllamaModel("ollama:llama3.2"));
+check("ollama: prefix stripping", ollamaModelName("ollama:llama3.2") === "llama3.2");
+check("claude model not flagged as ollama", !isOllamaModel("claude-opus-4-8"));
+
 // ─── Summary ──────────────────────────────────────────────────────────────────
 
 process.stdout.write("\n");

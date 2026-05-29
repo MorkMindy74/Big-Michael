@@ -17,6 +17,7 @@
  * adversarial debate and final synthesis (critical, few calls) use Opus.
  */
 
+import { Config } from "../config.js";
 import type { AgentTier, AgentType } from "../types.js";
 
 export type TaskType =
@@ -35,6 +36,21 @@ export type Complexity = "high" | "medium" | "low";
 const OPUS   = "claude-opus-4-8";
 const SONNET = "claude-sonnet-4-6";
 const HAIKU  = "claude-haiku-4-5-20251001";
+
+/** Returns the "ollama:<model>" model ID for local routing. */
+function ollamaModel(): string {
+  return `ollama:${Config.local.ollamaModel}`;
+}
+
+/** Parsed set of tiers that should route to Ollama when OLLAMA_ENABLED=true. */
+function ollamaTierSet(): Set<number> {
+  return new Set(
+    Config.local.ollamaTiers
+      .split(",")
+      .map((s) => parseInt(s.trim()))
+      .filter((n) => !isNaN(n)),
+  );
+}
 
 /**
  * Select the appropriate Claude model for a given agent + task combination.
@@ -55,6 +71,18 @@ export function selectModel(params: {
   complexity?: Complexity;
 }): string {
   const { tier, taskType, complexity } = params;
+
+  // ── Local Ollama routing ──────────────────────────────────────────────────
+  // When OLLAMA_ENABLED=true, lightweight tasks for configured tiers go local.
+  // Debate, synthesis, and T0 always stay on cloud (correctness-critical).
+  if (Config.local.ollamaEnabled && taskType !== "debate" && taskType !== "synthesis" && tier !== 0) {
+    const ollamaTiers = ollamaTierSet();
+    const lightweightForOllama = taskType === "descriptor" || taskType === "extraction" || taskType === "routing" || taskType === "translation";
+    if (tier !== undefined && ollamaTiers.has(tier)) return ollamaModel();
+    if (lightweightForOllama && (tier === undefined || ollamaTiers.has(tier ?? 99))) return ollamaModel();
+  }
+
+  // ── Cloud model selection ─────────────────────────────────────────────────
 
   // Always Haiku for lightweight tasks regardless of tier
   if (taskType === "descriptor") return HAIKU;
@@ -109,3 +137,8 @@ export const ModelLabels: Record<string, string> = {
   [SONNET]: "Sonnet 4.6",
   [HAIKU]:  "Haiku 4.5",
 };
+
+/** Human-readable label for any model ID including ollama:* IDs. */
+export function modelLabel(modelId: string): string {
+  return ModelLabels[modelId] ?? modelId;
+}

@@ -5,11 +5,11 @@
 // the Free Software Foundation, version 3.
 // See <https://www.gnu.org/licenses/gpl-3.0.html>
 
-import Anthropic from "@anthropic-ai/sdk";
 import { v4 as uuidv4 } from "uuid";
-import { Config } from "../config.js";
 import { logger } from "../logger.js";
-import { selectModel, estimateComplexity, ModelLabels } from "../routing/model.js";
+import { selectModel, estimateComplexity, modelLabel } from "../routing/model.js";
+import { getProvider, resolveModelId } from "../providers/index.js";
+import type { ProviderMessage, ProviderToolResultBlock } from "../providers/index.js";
 import type { ToolRegistry, ToolContext } from "../tools/index.js";
 import type { KnowledgeStore } from "../knowledge/index.js";
 import type { InterRoundMemoryStore } from "../memory/index.js";
@@ -23,8 +23,6 @@ import type {
   RoundGoal,
   MemoryEntry,
 } from "../types.js";
-
-const anthropic = new Anthropic({ apiKey: Config.anthropic.apiKey });
 
 export interface AgentContext {
   roundGoal: RoundGoal;
@@ -64,7 +62,7 @@ export class Agent {
       taskType: "descriptor",  // always Haiku
     });
     const prompt = buildNeedOfferPrompt(this.definition, ctx);
-    const response = await this.callClaude(prompt, 200, model);
+    const response = await this.callModel(prompt, 200, model);
     return parseNeedOffer(response, this.definition.id);
   }
 
@@ -90,7 +88,7 @@ export class Agent {
 
     logger.debug("Agent processing", {
       agent: this.definition.name,
-      model: ModelLabels[model] ?? model,
+      model: modelLabel(model),
       taskType,
       complexity,
       tools: this.definition.allowedTools.length,
@@ -110,13 +108,14 @@ export class Agent {
           memory: ctx.memory!,
           taskId: ctx.taskId!,
         })
-      : await this.callClaude(prompt, maxTokens, model);
+      : await this.callModel(prompt, maxTokens, model);
 
     return parseFindings(text, this.definition);
   }
 
   /**
-   * Anthropic tool_use agentic loop.
+   * Provider-agnostic tool_use agentic loop.
+   * Works with both Anthropic and Ollama (via the provider abstraction).
    * Loops until stop_reason === "end_turn" or the 10-iteration safety cap is hit.
    */
   private async runAgenticLoop(
@@ -137,13 +136,15 @@ export class Agent {
       taskId: refs.taskId,
     };
 
-    const messages: Anthropic.MessageParam[] = [{ role: "user", content: initialPrompt }];
+    const provider = getProvider(model);
+    const bareModel = resolveModelId(model);
+    const messages: ProviderMessage[] = [{ role: "user", content: initialPrompt }];
     let finalText = "";
 
     for (let iteration = 0; iteration < 10; iteration++) {
-      const response = await anthropic.messages.create({
-        model,
-        max_tokens: maxTokens,
+      const response = await provider.chat({
+        model: bareModel,
+        maxTokens,
         system: this.definition.systemPrompt,
         tools: toolSchemas,
         messages,
@@ -154,29 +155,26 @@ export class Agent {
         if (block.type === "text") finalText = block.text;
       }
 
-      if (response.stop_reason === "end_turn") break;
+      if (response.stopReason === "end_turn") break;
 
-      if (response.stop_reason === "tool_use") {
-        // Append the full assistant turn (may contain text + tool_use blocks)
+      if (response.stopReason === "tool_use") {
+        // Append full assistant turn (may contain text + tool_use blocks)
         messages.push({ role: "assistant", content: response.content });
 
         // Execute every tool_use block and collect results
-        const toolResults: Anthropic.ToolResultBlockParam[] = [];
+        const toolResults: ProviderToolResultBlock[] = [];
         for (const block of response.content) {
           if (block.type !== "tool_use") continue;
 
           logger.debug("Agent tool call", {
             agent: this.definition.name,
             tool: block.name,
+            provider: modelLabel(model),
           });
 
           let result: unknown;
           try {
-            result = await refs.toolRegistry.execute(
-              block.name,
-              block.input as Record<string, unknown>,
-              toolCtx,
-            );
+            result = await refs.toolRegistry.execute(block.name, block.input, toolCtx);
           } catch (err) {
             result = { error: (err as Error).message };
           }
@@ -194,7 +192,7 @@ export class Agent {
 
       logger.warn("Agentic loop unexpected stop_reason", {
         agent: this.definition.name,
-        stop_reason: response.stop_reason,
+        stop_reason: response.stopReason,
         iteration,
       });
       break;
@@ -203,20 +201,23 @@ export class Agent {
     return finalText;
   }
 
-  private async callClaude(
+  private async callModel(
     userMessage: string,
     maxTokens: number,
     model: string,
   ): Promise<string> {
-    const msg = await anthropic.messages.create({
-      model,
-      max_tokens: maxTokens,
+    const provider = getProvider(model);
+    const response = await provider.chat({
+      model: resolveModelId(model),
+      maxTokens,
       system: this.definition.systemPrompt,
       messages: [{ role: "user", content: userMessage }],
     });
-    const block = msg.content[0];
-    if (block.type !== "text") throw new Error("Unexpected content type from Claude");
-    return block.text;
+    const textBlock = response.content.find((b) => b.type === "text");
+    if (!textBlock || textBlock.type !== "text") {
+      throw new Error(`No text in response from model ${model}`);
+    }
+    return textBlock.text;
   }
 }
 

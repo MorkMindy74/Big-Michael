@@ -7,28 +7,74 @@
 
 import OpenAI from "openai";
 import { Config } from "./config.js";
+import { logger } from "./logger.js";
 import type { EmbeddingResult } from "./types.js";
 
-// OpenAI embeddings in dev; swap for Voyage AI (voyage-3-lite) or RuVector's built-in
-// ruvllm inference when moving to production with RuVector.
-const client = new OpenAI({ apiKey: Config.embeddings.apiKey });
+// ─── Providers ────────────────────────────────────────────────────────────────
+
+// OpenAI embeddings (cloud) — used when LOCAL_EMBEDDINGS=false
+let _openaiClient: OpenAI | undefined;
+function openaiClient(): OpenAI {
+  _openaiClient ??= new OpenAI({ apiKey: Config.embeddings.apiKey });
+  return _openaiClient;
+}
+
+// ─── Ollama local embedding via /api/embed ─────────────────────────────────
+
+interface OllamaEmbedResponse {
+  embeddings: number[][];
+  model: string;
+}
+
+async function ollamaEmbed(texts: string[]): Promise<number[][]> {
+  const url = `${Config.local.ollamaUrl}/api/embed`;
+  const model = Config.local.localEmbeddingModel;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model, input: texts }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Ollama embed failed (${res.status}): ${err}`);
+  }
+
+  const data = (await res.json()) as OllamaEmbedResponse;
+  if (!data.embeddings?.length) {
+    throw new Error("Ollama returned empty embeddings");
+  }
+  return data.embeddings;
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
 
 export async function embed(text: string): Promise<EmbeddingResult> {
-  const response = await client.embeddings.create({
+  if (Config.local.localEmbeddings) {
+    const [vec] = await ollamaEmbed([text]);
+    return { text, embedding: vec, model: Config.local.localEmbeddingModel };
+  }
+
+  const response = await openaiClient().embeddings.create({
     model: Config.embeddings.model,
     input: text,
     dimensions: Config.embeddings.dimensions,
   });
-  return {
-    text,
-    embedding: response.data[0].embedding,
-    model: Config.embeddings.model,
-  };
+  return { text, embedding: response.data[0].embedding, model: Config.embeddings.model };
 }
 
 export async function embedBatch(texts: string[]): Promise<EmbeddingResult[]> {
   if (texts.length === 0) return [];
-  const response = await client.embeddings.create({
+
+  if (Config.local.localEmbeddings) {
+    // Ollama's /api/embed accepts an array input
+    const vectors = await ollamaEmbed(texts);
+    const model = Config.local.localEmbeddingModel;
+    return texts.map((text, i) => ({ text, embedding: vectors[i], model }));
+  }
+
+  const response = await openaiClient().embeddings.create({
     model: Config.embeddings.model,
     input: texts,
     dimensions: Config.embeddings.dimensions,

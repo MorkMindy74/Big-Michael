@@ -24,7 +24,8 @@ export const Config = {
   },
 
   embeddings: {
-    apiKey: require("OPENAI_API_KEY"),
+    // Optional when LOCAL_EMBEDDINGS=true
+    apiKey: process.env.OPENAI_API_KEY ?? "",
     model: optional("EMBEDDING_MODEL", "text-embedding-3-small"),
     dimensions: parseInt(optional("EMBEDDING_DIMENSIONS", "1536")),
   },
@@ -63,6 +64,18 @@ export const Config = {
 
   search: {
     tavilyApiKey: process.env.TAVILY_API_KEY ?? "",
+  },
+
+  // Local inference — Ollama (https://ollama.com) for LLM + embeddings
+  local: {
+    ollamaUrl: optional("OLLAMA_URL", "http://localhost:11434"),
+    ollamaEnabled: optional("OLLAMA_ENABLED", "false") === "true",
+    ollamaModel: optional("OLLAMA_MODEL", "llama3.2"),
+    // Comma-separated agent tiers to route to Ollama, e.g. "3" or "2,3"
+    ollamaTiers: optional("OLLAMA_TIERS", "3"),
+    localEmbeddings: optional("LOCAL_EMBEDDINGS", "false") === "true",
+    // Embedding model served via Ollama — e.g. nomic-embed-text, all-minilm
+    localEmbeddingModel: optional("LOCAL_EMBEDDING_MODEL", "nomic-embed-text"),
   },
 
   persistence: {

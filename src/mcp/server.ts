@@ -1,0 +1,298 @@
+/**
+ * MCP Server — exposes the full orchestration system over the Model Context Protocol.
+ *
+ * Any MCP-compatible client (Claude Desktop, Mike OSS, Laverne, custom) can connect
+ * and invoke these tools. This is the primary integration surface.
+ *
+ * Also starts a Fastify REST API on a separate port for web frontends that
+ * prefer HTTP over stdio MCP.
+ */
+
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
+import Fastify from "fastify";
+import { z } from "zod";
+import { Config } from "../config.js";
+import { logger } from "../logger.js";
+import { Orchestrator } from "../orchestrator.js";
+import type { WorkflowType } from "../types.js";
+
+// ─── Tool schemas ─────────────────────────────────────────────────────────────
+
+const TOOLS = [
+  {
+    name: "submit_task",
+    description: "Submit a new legal task for multi-agent processing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        description: { type: "string", description: "Full description of the legal task" },
+        workflowType: {
+          type: "string",
+          enum: ["counsel", "roundtable", "adversarial", "review", "tabulate", "full_bench"],
+          description: "Orchestration workflow to use",
+        },
+        documentIds: {
+          type: "array",
+          items: { type: "string" },
+          description: "IDs of documents already ingested into the knowledge store",
+        },
+      },
+      required: ["description", "workflowType"],
+    },
+  },
+  {
+    name: "get_task",
+    description: "Get the current state of a task including findings, round history, and pending gates.",
+    inputSchema: {
+      type: "object",
+      properties: { taskId: { type: "string" } },
+      required: ["taskId"],
+    },
+  },
+  {
+    name: "list_tasks",
+    description: "List all tasks and their current statuses.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "approve_gate",
+    description: "Approve a human review gate, allowing the finding to proceed to final output.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: { type: "string" },
+        gateId: { type: "string" },
+        note: { type: "string", description: "Optional reviewer note" },
+      },
+      required: ["taskId", "gateId"],
+    },
+  },
+  {
+    name: "reject_gate",
+    description: "Reject a human review gate, removing the finding from the output.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: { type: "string" },
+        gateId: { type: "string" },
+        reason: { type: "string" },
+      },
+      required: ["taskId", "gateId", "reason"],
+    },
+  },
+  {
+    name: "ingest_document",
+    description: "Ingest a document into the knowledge store for use in tasks.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        content: { type: "string" },
+        source: { type: "string" },
+        jurisdiction: { type: "string" },
+        documentType: { type: "string" },
+      },
+      required: ["title", "content"],
+    },
+  },
+  {
+    name: "search_knowledge",
+    description: "Semantic search across the document knowledge store.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string" },
+        topK: { type: "number" },
+        jurisdiction: { type: "string" },
+        documentType: { type: "string" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "list_agents",
+    description: "List all agents in the registry with their tier, domain, and capabilities.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tier: { type: "number", enum: [0, 1, 2, 3] },
+        domain: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "query_memory",
+    description: "Query inter-round memory for a task.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string" },
+        taskId: { type: "string" },
+        agentId: { type: "string" },
+        topK: { type: "number" },
+      },
+      required: ["query", "taskId"],
+    },
+  },
+] as const;
+
+// ─── MCP server ───────────────────────────────────────────────────────────────
+
+export async function startMcpServer(orchestrator: Orchestrator): Promise<void> {
+  const server = new Server(
+    { name: "fac-eu-brief", version: "0.1.0" },
+    { capabilities: { tools: {} } },
+  );
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
+
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
+    try {
+      const result = await handleTool(name, args ?? {}, orchestrator);
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error("MCP tool error", { tool: name, error: message });
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error: ${message}` }],
+      };
+    }
+  });
+
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  logger.info("MCP server started (stdio)");
+}
+
+// ─── REST API (Fastify) ───────────────────────────────────────────────────────
+
+export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
+  const app = Fastify({ logger: false });
+
+  app.post("/tasks", async (req, reply) => {
+    const body = req.body as { description: string; workflowType: WorkflowType; documentIds?: string[] };
+    const task = await orchestrator.submitTask(body);
+    return reply.status(201).send(task);
+  });
+
+  app.get("/tasks", async () => orchestrator.listTasks());
+
+  app.get("/tasks/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const task = orchestrator.getTask(id);
+    if (!task) return reply.status(404).send({ error: "Task not found" });
+    return task;
+  });
+
+  app.post("/tasks/:taskId/gates/:gateId/approve", async (req, reply) => {
+    const { taskId, gateId } = req.params as { taskId: string; gateId: string };
+    const { note } = (req.body ?? {}) as { note?: string };
+    orchestrator.approveGate(taskId, gateId, note);
+    return reply.status(200).send({ ok: true });
+  });
+
+  app.post("/tasks/:taskId/gates/:gateId/reject", async (req, reply) => {
+    const { taskId, gateId } = req.params as { taskId: string; gateId: string };
+    const { reason } = (req.body ?? {}) as { reason: string };
+    orchestrator.rejectGate(taskId, gateId, reason);
+    return reply.status(200).send({ ok: true });
+  });
+
+  app.post("/documents", async (req, reply) => {
+    const body = req.body as { title: string; content: string; source?: string; jurisdiction?: string; documentType?: string };
+    const docId = await orchestrator.knowledge.ingest(body);
+    return reply.status(201).send({ id: docId });
+  });
+
+  app.get("/documents/search", async (req) => {
+    const { query, topK, jurisdiction, documentType } = req.query as Record<string, string>;
+    return orchestrator.knowledge.search(query, {
+      topK: topK ? parseInt(topK) : undefined,
+      jurisdiction,
+      documentType,
+    });
+  });
+
+  app.get("/agents", async (req) => {
+    const { tier, domain } = req.query as Record<string, string>;
+    if (tier || domain) {
+      return orchestrator.registry.search("", {
+        tier: tier ? parseInt(tier) as 0 | 1 | 2 | 3 : undefined,
+        topK: 100,
+      });
+    }
+    return orchestrator.registry.listAll();
+  });
+
+  await app.listen({ port: Config.api.port, host: "0.0.0.0" });
+  logger.info("REST API started", { port: Config.api.port });
+}
+
+// ─── Tool handler ─────────────────────────────────────────────────────────────
+
+async function handleTool(
+  name: string,
+  args: Record<string, unknown>,
+  orch: Orchestrator,
+): Promise<unknown> {
+  switch (name) {
+    case "submit_task":
+      return orch.submitTask({
+        description: args.description as string,
+        workflowType: args.workflowType as WorkflowType,
+        documentIds: args.documentIds as string[] | undefined,
+      });
+
+    case "get_task": {
+      const task = orch.getTask(args.taskId as string);
+      if (!task) throw new Error(`Task not found: ${args.taskId}`);
+      return task;
+    }
+
+    case "list_tasks":
+      return orch.listTasks();
+
+    case "approve_gate":
+      orch.approveGate(args.taskId as string, args.gateId as string, args.note as string | undefined);
+      return { ok: true };
+
+    case "reject_gate":
+      orch.rejectGate(args.taskId as string, args.gateId as string, args.reason as string);
+      return { ok: true };
+
+    case "ingest_document":
+      return { id: await orch.knowledge.ingest(args as Parameters<typeof orch.knowledge.ingest>[0]) };
+
+    case "search_knowledge":
+      return orch.knowledge.search(args.query as string, {
+        topK: args.topK as number | undefined,
+        jurisdiction: args.jurisdiction as string | undefined,
+        documentType: args.documentType as string | undefined,
+      });
+
+    case "list_agents":
+      return orch.registry.search("", {
+        tier: args.tier as 0 | 1 | 2 | 3 | undefined,
+        topK: 100,
+      });
+
+    case "query_memory":
+      return orch.memory.query(args.query as string, {
+        taskId: args.taskId as string,
+        agentId: args.agentId as string | undefined,
+        topK: args.topK as number | undefined,
+      });
+
+    default:
+      throw new Error(`Unknown tool: ${name}`);
+  }
+}

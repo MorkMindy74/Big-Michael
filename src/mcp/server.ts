@@ -411,8 +411,9 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
 
   app.get("/documents/search", async (req) => {
     const { query, topK, jurisdiction, documentType } = req.query as Record<string, string>;
+    const topKNum = topK ? parseInt(topK, 10) : undefined;
     return orchestrator.knowledge.search(query, {
-      topK: topK ? parseInt(topK) : undefined,
+      topK: topKNum && Number.isInteger(topKNum) && topKNum > 0 ? topKNum : undefined,
       jurisdiction,
       documentType,
       ownerId: docOwnerScope(req),
@@ -420,12 +421,11 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
   });
 
   app.get("/agents", async (req) => {
-    const { tier, domain } = req.query as Record<string, string>;
-    if (tier || domain) {
-      return orchestrator.registry.search("", {
-        tier: tier ? parseInt(tier) as 0 | 1 | 2 | 3 : undefined,
-        topK: 100,
-      });
+    const { tier } = req.query as Record<string, string>;
+    if (tier) {
+      const tierNum = parseInt(tier, 10);
+      const validTier = ([0, 1, 2, 3] as const).find((t) => t === tierNum);
+      return orchestrator.registry.search("", { tier: validTier, topK: 100 });
     }
     return orchestrator.registry.listAll();
   });
@@ -544,9 +544,11 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
   // T19: get_round REST route
   app.get("/tasks/:taskId/rounds/:round", async (req, reply) => {
     const { taskId, round } = req.params as { taskId: string; round: string };
+    const roundNum = parseInt(round, 10);
+    if (!Number.isInteger(roundNum) || roundNum < 1) return reply.status(400).send({ error: "Invalid round number" });
     const task = orchestrator.getTask(taskId);
     if (!task || !canViewTask(getUser(req), task)) return reply.status(404).send({ error: "Task not found" });
-    const roundState = task.rounds[parseInt(round) - 1];
+    const roundState = task.rounds[roundNum - 1];
     if (!roundState) return reply.status(404).send({ error: "Round not found" });
     return roundState;
   });
@@ -581,7 +583,8 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
   app.get("/audit", async (req) => {
     const { taskId, limit } = req.query as Record<string, string>;
     const visible = auditVisible(req);
-    return auditLogger.readRecent(taskId, limit ? parseInt(limit) : undefined).filter(visible);
+    const limitNum = limit ? parseInt(limit, 10) : undefined;
+    return auditLogger.readRecent(taskId, limitNum && Number.isInteger(limitNum) && limitNum > 0 ? limitNum : undefined).filter(visible);
   });
 
   // Live audit SSE stream

@@ -1,4 +1,11 @@
-import type { Task, Template, Health, WorkflowType, SearchResult, AuditEntry, DocumentRef } from "./types";
+import type { Task, Template, Health, WorkflowType, SearchResult, AuditEntry, DocumentRef, AgentSummary, AppSettings, LawyerProfile, Me } from "./types";
+
+type SettingsPatch = {
+  presentation?: Partial<AppSettings["presentation"]>;
+  dytopo?: Partial<AppSettings["dytopo"]>;
+  debate?: Partial<AppSettings["debate"]>;
+  docuseal?: Partial<{ enabled: boolean; url: string; apiKey: string }>;
+};
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -19,12 +26,31 @@ export const api = {
   getTask: (id: string) => fetch(`/tasks/${id}`).then(json<Task>),
   health: () => fetch("/health").then(json<Health>),
   listTemplates: () => fetch("/templates").then(json<Template[]>),
+  listAgents: () => fetch("/agents").then(json<AgentSummary[]>),
+  getSettings: () => fetch("/settings").then(json<AppSettings>),
+  updateSettings: (patch: SettingsPatch) =>
+    fetch("/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) }).then(json<AppSettings>),
 
-  submitTask: (body: { description: string; workflowType: WorkflowType; documentIds?: string[] }) =>
+  submitTask: (body: { description: string; workflowType: WorkflowType; documentIds?: string[]; clientNumber?: string; matterNumber?: string }) =>
     fetch("/tasks", POST(body)).then(json<Task>),
 
-  fromTemplate: (body: { templateId: string; substitutions?: Record<string, string>; documentIds?: string[] }) =>
+  fromTemplate: (body: { templateId: string; substitutions?: Record<string, string>; documentIds?: string[]; clientNumber?: string; matterNumber?: string }) =>
     fetch("/tasks/from-template", POST(body)).then(json<Task>),
+
+  deleteTask: (id: string) =>
+    fetch(`/tasks/${id}`, { method: "DELETE" }).then((r) => json<{ ok: true }>(r)),
+
+  assignLawyers: (taskId: string, lawyerIds: string[]) =>
+    fetch(`/tasks/${taskId}/assign`, POST({ lawyerIds })).then(json<Task>),
+
+  me: () => fetch("/me").then(json<Me>),
+  authProviders: () => fetch("/auth/providers").then(json<{ google: boolean; microsoft: boolean; linkedin: boolean }>),
+  logout: () => fetch("/auth/logout", { method: "POST" }).then((r) => json<{ ok: true }>(r)),
+  listProfiles: () => fetch("/profiles").then(json<LawyerProfile[]>),
+  createProfile: (body: { name: string; email: string; role?: string; title?: string }) =>
+    fetch("/profiles", POST(body)).then(json<LawyerProfile>),
+  deleteProfile: (id: string) =>
+    fetch(`/profiles/${id}`, { method: "DELETE" }).then((r) => json<{ ok: true }>(r)),
 
   approveGate: (taskId: string, gateId: string, note?: string) =>
     fetch(`/tasks/${taskId}/gates/${gateId}/approve`, POST({ note })).then((r) => json<{ ok: true }>(r)),
@@ -38,6 +64,12 @@ export const api = {
 
   ingestDocument: (body: { title: string; content: string; source?: string; jurisdiction?: string; documentType?: string }) =>
     fetch("/documents", POST(body)).then(json<{ id: string }>),
+
+  uploadDocument: (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return fetch("/documents/upload", { method: "POST", body: fd }).then(json<{ id: string; title: string }>);
+  },
 
   searchDocuments: (query: string) =>
     fetch(`/documents/search?query=${encodeURIComponent(query)}`).then(json<SearchResult[]>),

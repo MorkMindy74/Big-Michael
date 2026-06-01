@@ -27,6 +27,8 @@ export type AuditEventType =
   | "task.started"
   | "task.complete"
   | "task.failed"
+  | "task.deleted"
+  | "task.assigned"
   | "phase.start"
   | "phase.complete"
   | "round.start"

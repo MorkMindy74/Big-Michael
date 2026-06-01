@@ -220,6 +220,14 @@ export type TaskStatus =
 export interface Task {
   id: string;
   description: string;
+  /** Law-firm client number (the client this matter belongs to). Optional. */
+  clientNumber?: string;
+  /** Law-firm matter number (the file/matter reference). Optional. */
+  matterNumber?: string;
+  /** Lawyer profile ids this matter is assigned to. A lawyer sees a matter only
+   *  if their id is here; partners (admins) see all and control assignment.
+   *  Multiple ids = a partner has shared the case across lawyers. */
+  assignedLawyerIds?: string[];
   /** Document IDs ingested into the knowledge store for this task */
   documentIds: string[];
   workflowType: WorkflowType;
@@ -255,6 +263,32 @@ export interface TaskTable {
   generatedAt: Date;
 }
 
+// ─── Lawyers, roles, sessions ────────────────────────────────────────────────
+
+/** partner = admin (sees all matters, controls assignment); lawyer = sees own matters. */
+export type LawyerRole = "lawyer" | "partner";
+
+export interface LawyerProfile {
+  id: string;
+  name: string;
+  email: string;
+  role: LawyerRole;
+  title?: string;
+  /** Hex accent for the initials avatar. */
+  color?: string;
+  /** OAuth subject this profile is linked to, once auth is live. */
+  oauthSubject?: string;
+  createdAt: Date;
+}
+
+/** The authenticated principal for a request (or the local-dev partner when auth is off). */
+export interface SessionUser {
+  profileId: string;
+  name: string;
+  email: string;
+  role: LawyerRole;
+}
+
 // ─── Knowledge store ─────────────────────────────────────────────────────────
 
 export interface Document {
@@ -264,6 +298,8 @@ export interface Document {
   source?: string;
   jurisdiction?: string;
   documentType?: string;
+  /** Lawyer profile id that uploaded/ingested this doc (for access scoping). */
+  ownerId?: string;
   metadata?: Record<string, unknown>;
   ingestedAt: Date;
 }

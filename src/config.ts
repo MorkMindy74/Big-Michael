@@ -47,6 +47,37 @@ export const Config = {
 
   api: {
     port: parseInt(optional("API_PORT", "3101")),
+    // Bind to loopback by default — the REST API has no auth of its own and can
+    // submit tasks, ingest/read documents, and trigger paid LLM calls. Set
+    // API_HOST=0.0.0.0 only behind a trusted proxy or with API_KEY set.
+    host: optional("API_HOST", "127.0.0.1"),
+    // Optional shared secret. If set, every request (except /health) must send
+    // it as the `x-api-key` header. Empty = no auth (safe only on loopback).
+    apiKey: optional("API_KEY", ""),
+  },
+
+  // Authentication, sessions, and access control.
+  auth: {
+    // OFF by default → local dev runs with no login as a single partner who
+    // sees everything. Turn ON (with OAuth creds below) for shared deployments.
+    enabled: optional("AUTH_ENABLED", "false") === "true",
+    sessionSecret: optional("SESSION_SECRET", "dev-insecure-change-me-in-production-please"),
+    // The browser origin(s) allowed by CORS. Defaults to local Vite ports.
+    allowedOrigins: optional("CORS_ORIGINS", "http://localhost:5173,http://localhost:5174")
+      .split(",").map((s) => s.trim()).filter(Boolean),
+    // Public base URL of THIS API (for OAuth redirect URIs).
+    baseUrl: optional("PUBLIC_BASE_URL", "http://localhost:3101"),
+    // Where to send the browser back after a successful login.
+    uiUrl: optional("PUBLIC_UI_URL", "http://localhost:5173"),
+    // Emails that become `partner` (admin) on first OAuth login; everyone else
+    // is provisioned as `lawyer`. Comma-separated.
+    adminEmails: optional("ADMIN_EMAILS", "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean),
+    // OAuth app credentials — register apps with each provider and set these.
+    providers: {
+      google:    { clientId: optional("GOOGLE_CLIENT_ID", ""),    clientSecret: optional("GOOGLE_CLIENT_SECRET", "") },
+      microsoft: { clientId: optional("MICROSOFT_CLIENT_ID", ""), clientSecret: optional("MICROSOFT_CLIENT_SECRET", "") },
+      linkedin:  { clientId: optional("LINKEDIN_CLIENT_ID", ""),  clientSecret: optional("LINKEDIN_CLIENT_SECRET", "") },
+    },
   },
 
   // Per-agent agentic loop — how many tool_use iterations an agent may run
@@ -94,10 +125,18 @@ export const Config = {
   pdf: {
     pythonBin: optional("PDF_PYTHON_BIN", "python3"),
     outputDir: optional("PDF_OUTPUT_DIR", "./output/documents"),
+    // Directories the PDF tools are allowed to READ from. Prevents an agent
+    // (e.g. via prompt injection) from reading arbitrary files like .env or
+    // system files through a tool `path`. Comma-separated; empty = sensible
+    // defaults (cwd + OS temp + output dir), resolved in tools/pdf.ts.
+    allowedDirs: optional("PDF_ALLOWED_DIRS", "")
+      .split(",").map((d) => d.trim()).filter(Boolean),
   },
 
   persistence: {
     tasksFile: optional("TASKS_FILE", ".tasks.json"),
+    settingsFile: optional("SETTINGS_FILE", ".settings.json"),
+    profilesFile: optional("PROFILES_FILE", ".profiles.json"),
   },
 
   logging: {
@@ -116,6 +155,16 @@ export const Config = {
   docuseal: {
     apiKey: process.env.DOCUSEAL_API_KEY ?? "",
     url: optional("DOCUSEAL_URL", "http://localhost:3000"),
+    // Whether e-signature is offered. Defaults to on when an API key is present;
+    // the admin panel can toggle it and set url/key at runtime.
+    enabled: optional("DOCUSEAL_ENABLED", (process.env.DOCUSEAL_API_KEY ? "true" : "false")) === "true",
+  },
+
+  // UI/presentation preferences, tunable from the admin panel (persisted).
+  presentation: {
+    // "lawyer" = full legal terminology + citations; "plain" = plain-language framing for non-lawyers.
+    mode: optional("UI_MODE", "lawyer") as "lawyer" | "plain",
+    firmName: optional("FIRM_NAME", ""),
   },
 
   // Infisical — open-source secrets manager (https://infisical.com)

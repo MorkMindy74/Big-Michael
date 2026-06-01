@@ -35,3 +35,5 @@ output/documents/
 # Runtime-generated data
 audit.jsonl
 .tasks.json
+.settings.json
+.profiles.json

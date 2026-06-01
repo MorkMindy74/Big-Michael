@@ -9,12 +9,15 @@ export function SubmitModal({ onClose, onCreated, notify }: {
   notify: (msg: string) => void;
 }) {
   const [description, setDescription] = useState("");
+  const [clientNumber, setClientNumber] = useState("");
+  const [matterNumber, setMatterNumber] = useState("");
   const [workflow, setWorkflow] = useState<WorkflowType>("full_bench");
   const [templates, setTemplates] = useState<Template[]>([]);
   const [templateId, setTemplateId] = useState("");
   const [docs, setDocs] = useState<DocumentRef[]>([]);
   const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     api.listTemplates().then(setTemplates).catch(() => {});
@@ -29,13 +32,31 @@ export function SubmitModal({ onClose, onCreated, notify }: {
     });
   }
 
+  async function onUpload(files: FileList | null) {
+    if (!files?.length) return;
+    setUploading(true);
+    try {
+      for (const file of Array.from(files)) {
+        const { id, title } = await api.uploadDocument(file);
+        notify(`Uploaded "${title}"`);
+        setSelectedDocs((prev) => new Set(prev).add(id));   // auto-attach
+      }
+      setDocs(await api.listDocuments());
+    } catch (e) {
+      notify((e as Error).message);
+    } finally {
+      setUploading(false);
+    }
+  }
+
   async function submit() {
     setBusy(true);
     const documentIds = [...selectedDocs];
+    const refs = { clientNumber: clientNumber.trim() || undefined, matterNumber: matterNumber.trim() || undefined };
     try {
       const task = templateId
-        ? await api.fromTemplate({ templateId, documentIds })
-        : await api.submitTask({ description, workflowType: workflow, documentIds });
+        ? await api.fromTemplate({ templateId, documentIds, ...refs })
+        : await api.submitTask({ description, workflowType: workflow, documentIds, ...refs });
       notify("Task submitted — agents convening");
       onCreated(task);
     } catch (e) {
@@ -57,11 +78,22 @@ export function SubmitModal({ onClose, onCreated, notify }: {
         </div>
 
         <div className="modal-body">
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+            <div className="field">
+              <label>Client number</label>
+              <input value={clientNumber} onChange={(e) => setClientNumber(e.target.value)} placeholder="e.g. 10482" />
+            </div>
+            <div className="field">
+              <label>Matter number</label>
+              <input value={matterNumber} onChange={(e) => setMatterNumber(e.target.value)} placeholder="e.g. 10482-014" />
+            </div>
+          </div>
+
           <div className="field">
             <label>The matter</label>
             <textarea
               autoFocus
-              placeholder="e.g. Assess whether our acquisition of Acme GmbH triggers a mandatory notification under EU Merger Regulation 139/2004…"
+              placeholder="e.g. Review this master services agreement and summarise the key risks, obligations, and unusual terms under New York law…"
               value={description}
               onChange={(e) => { setDescription(e.target.value); setTemplateId(""); }}
             />
@@ -80,9 +112,19 @@ export function SubmitModal({ onClose, onCreated, notify }: {
             </div>
           </div>
 
-          {docs.length > 0 && (
-            <div className="field">
+          <div className="field">
+            <div className="field-head">
               <label>Attach documents · {selectedDocs.size} selected</label>
+              <label className="upload-btn">
+                {uploading ? "Uploading…" : "⬆ Upload file"}
+                <input type="file" multiple accept=".pdf,.txt,.md,.markdown,.csv,.json,.rtf,text/*,application/pdf"
+                  onChange={(e) => { onUpload(e.target.files); e.target.value = ""; }} disabled={uploading} hidden />
+              </label>
+            </div>
+            {docs.length === 0 && !uploading && (
+              <div className="doc-empty">No documents yet — upload a PDF or text file, or add them in the Library.</div>
+            )}
+            {docs.length > 0 && (
               <div className="doc-pick">
                 {docs.map((d) => (
                   <button
@@ -97,8 +139,8 @@ export function SubmitModal({ onClose, onCreated, notify }: {
                   </button>
                 ))}
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
           {templates.length > 0 && (
             <>

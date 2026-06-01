@@ -87,9 +87,28 @@ export interface RoundState {
   completedAt?: string;
 }
 
+export type LawyerRole = "lawyer" | "partner";
+
+export interface LawyerProfile {
+  id: string;
+  name: string;
+  email: string;
+  role: LawyerRole;
+  title?: string;
+  color?: string;
+}
+
+export interface Me {
+  user: { profileId: string; name: string; email: string; role: LawyerRole } | null;
+  authEnabled: boolean;
+}
+
 export interface Task {
   id: string;
   description: string;
+  clientNumber?: string;
+  matterNumber?: string;
+  assignedLawyerIds?: string[];
   documentIds: string[];
   workflowType: WorkflowType;
   status: TaskStatus;
@@ -112,6 +131,22 @@ export interface Template {
   id: string;
   name: string;
   description: string;
+}
+
+export interface AppSettings {
+  presentation: { mode: "lawyer" | "plain"; firmName: string };
+  dytopo: { maxRounds: number; maxAgentsPerRound: number; similarityThreshold: number };
+  debate: { verificationPasses: number; gateConfidenceThreshold: number; adversarialEnabled: boolean; citationRequired: boolean };
+  docuseal: { enabled: boolean; url: string; apiKeySet: boolean };
+}
+
+export interface AgentSummary {
+  id: string;
+  name: string;
+  tier: number;
+  type: string;
+  domain: string;
+  description?: string;
 }
 
 export interface DocumentRef {

@@ -8,7 +8,7 @@
 /**
  * Adapter / harness interface.
  *
- * fac-eu-brief acts as a meta-orchestrator harness. External agent systems
+ * Big Michael acts as a meta-orchestrator harness. External agent systems
  * (Lavern, Mike OSS, custom) expose their agents via adapters that convert
  * their native formats into AgentDefinition records.
  *

@@ -22,11 +22,21 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import Fastify from "fastify";
+import type { FastifyRequest } from "fastify";
+import cors from "@fastify/cors";
+import cookie from "@fastify/cookie";
+import multipart from "@fastify/multipart";
+import { mkdir, writeFile, unlink } from "fs/promises";
+import { join, extname, basename } from "path";
+import { randomUUID } from "crypto";
+import { extractTextFromPdf } from "../tools/pdf.js";
 import { Config } from "../config.js";
 import { logger } from "../logger.js";
 import { auditLogger } from "../audit/index.js";
 import { Orchestrator } from "../orchestrator.js";
-import type { WorkflowType } from "../types.js";
+import type { WorkflowType, SessionUser } from "../types.js";
+import { LOCAL_PARTNER, filterVisible, canViewTask, isPartner } from "../auth/index.js";
+import { registerAuthRoutes, readSessionCookie } from "../auth/oauth.js";
 
 // ─── Tool schemas ─────────────────────────────────────────────────────────────
 
@@ -48,6 +58,8 @@ const TOOLS = [
           items: { type: "string" },
           description: "IDs of documents already ingested into the knowledge store",
         },
+        clientNumber: { type: "string", description: "Optional law-firm client number" },
+        matterNumber: { type: "string", description: "Optional law-firm matter number" },
       },
       required: ["description", "workflowType"],
     },
@@ -227,19 +239,86 @@ export async function startMcpServer(orchestrator: Orchestrator): Promise<void> 
 // ─── REST API (Fastify) ───────────────────────────────────────────────────────
 
 export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
-  const app = Fastify({ logger: false });
+  // bodyLimit bounds request bodies (document ingestion can be large but must
+  // not be unbounded). x-powered-by/server header is off by default in Fastify.
+  const app = Fastify({ logger: false, bodyLimit: 25 * 1024 * 1024 });
+
+  // CORS — restrict the browser origins allowed to call the API. Local Vite
+  // proxies same-origin so this mainly governs cross-origin/deployed UIs.
+  // credentials:true so session cookies ride along once OAuth is live.
+  await app.register(cors, { origin: Config.auth.allowedOrigins, credentials: true });
+  await app.register(cookie, { secret: Config.auth.sessionSecret });
+  await app.register(multipart, { limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
+  registerAuthRoutes(app, orchestrator);
+
+  // Resolve the principal for a request. Auth OFF (local) → the LOCAL_PARTNER
+  // who sees everything. Auth ON → the signed session cookie from OAuth login.
+  const getUser = (req: FastifyRequest): SessionUser | null => {
+    if (!Config.auth.enabled) return LOCAL_PARTNER;
+    return readSessionCookie(req);
+  };
+
+  // Optional shared-secret auth. When API_KEY is set, every request except the
+  // health check must present it as `x-api-key`. This is defence-in-depth for
+  // anyone who runs the API off loopback; on 127.0.0.1 it can be left unset.
+  if (Config.api.apiKey) {
+    app.addHook("onRequest", async (req, reply) => {
+      if (req.url === "/health") return;
+      if (req.headers["x-api-key"] !== Config.api.apiKey) {
+        return reply.code(401).send({ error: "Unauthorized" });
+      }
+    });
+  }
+
+  // When auth is enabled, require an authenticated principal on everything
+  // except health + the OAuth login/callback routes. (OAuth routes land next.)
+  if (Config.auth.enabled) {
+    app.addHook("onRequest", async (req, reply) => {
+      if (req.url === "/health" || req.url.startsWith("/auth/")) return;
+      if (!getUser(req)) return reply.code(401).send({ error: "Authentication required" });
+    });
+  }
 
   app.post("/tasks", async (req, reply) => {
-    const body = req.body as { description: string; workflowType: WorkflowType; documentIds?: string[] };
+    const body = req.body as {
+      description: string; workflowType: WorkflowType; documentIds?: string[];
+      clientNumber?: string; matterNumber?: string;
+    };
     const task = await orchestrator.submitTask(body);
-    return reply.status(201).send(task);
+    // The creator is assigned to their own matter so they can see it under the
+    // access rule. Partners see everything regardless.
+    const user = getUser(req);
+    if (user) orchestrator.assignLawyers(task.id, [user.profileId]);
+    return reply.status(201).send(orchestrator.getTask(task.id) ?? task);
   });
 
-  app.get("/tasks", async () => orchestrator.listTasks());
+  // Only matters the principal may see (partner → all; lawyer → assigned only).
+  app.get("/tasks", async (req) => filterVisible(getUser(req), orchestrator.listTasks()));
 
   app.get("/tasks/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
     const task = orchestrator.getTask(id);
+    if (!task) return reply.status(404).send({ error: "Task not found" });
+    // Don't reveal existence of matters the principal can't see.
+    if (!canViewTask(getUser(req), task)) return reply.status(404).send({ error: "Task not found" });
+    return task;
+  });
+
+  // Delete a matter (must be visible to the principal).
+  app.delete("/tasks/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const task = orchestrator.getTask(id);
+    if (!task || !canViewTask(getUser(req), task)) return reply.status(404).send({ error: "Task not found" });
+    orchestrator.deleteTask(id);
+    return reply.status(200).send({ ok: true });
+  });
+
+  // Assign lawyer(s) to a matter — partner only (controls cross-lawyer sharing).
+  app.post("/tasks/:id/assign", async (req, reply) => {
+    if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
+    const { id } = req.params as { id: string };
+    const { lawyerIds } = req.body as { lawyerIds: string[] };
+    const task = orchestrator.assignLawyers(id, Array.isArray(lawyerIds) ? lawyerIds : []);
     if (!task) return reply.status(404).send({ error: "Task not found" });
     return task;
   });
@@ -248,7 +327,7 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
   app.get("/tasks/:id/table.csv", async (req, reply) => {
     const { id } = req.params as { id: string };
     const task = orchestrator.getTask(id);
-    if (!task) return reply.status(404).send({ error: "Task not found" });
+    if (!task || !canViewTask(getUser(req), task)) return reply.status(404).send({ error: "Task not found" });
     if (!task.table) return reply.status(404).send({ error: "No table available for this task" });
 
     const esc = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
@@ -269,6 +348,8 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
 
   app.post("/tasks/:taskId/gates/:gateId/approve", async (req, reply) => {
     const { taskId, gateId } = req.params as { taskId: string; gateId: string };
+    const task = orchestrator.getTask(taskId);
+    if (!task || !canViewTask(getUser(req), task)) return reply.status(404).send({ error: "Task not found" });
     const { note } = (req.body ?? {}) as { note?: string };
     orchestrator.approveGate(taskId, gateId, note);
     return reply.status(200).send({ ok: true });
@@ -276,6 +357,8 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
 
   app.post("/tasks/:taskId/gates/:gateId/reject", async (req, reply) => {
     const { taskId, gateId } = req.params as { taskId: string; gateId: string };
+    const task = orchestrator.getTask(taskId);
+    if (!task || !canViewTask(getUser(req), task)) return reply.status(404).send({ error: "Task not found" });
     const { reason } = (req.body ?? {}) as { reason: string };
     orchestrator.rejectGate(taskId, gateId, reason);
     return reply.status(200).send({ ok: true });
@@ -283,11 +366,48 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
 
   app.post("/documents", async (req, reply) => {
     const body = req.body as { title: string; content: string; source?: string; jurisdiction?: string; documentType?: string };
-    const docId = await orchestrator.knowledge.ingest(body);
+    const docId = await orchestrator.knowledge.ingest({ ...body, ownerId: getUser(req)?.profileId });
     return reply.status(201).send({ id: docId });
   });
 
-  app.get("/documents", async () => orchestrator.knowledge.listDocuments());
+  // Upload an actual file (PDF or text), extract its text, and ingest it.
+  app.post("/documents/upload", async (req, reply) => {
+    const data = await (req as unknown as { file: () => Promise<{ filename: string; mimetype: string; toBuffer: () => Promise<Buffer> } | undefined> }).file();
+    if (!data) return reply.status(400).send({ error: "No file uploaded" });
+    const filename = data.filename || "document";
+    const ext = extname(filename).toLowerCase();
+    const buf = await data.toBuffer();
+    const TEXT_EXT = [".txt", ".md", ".markdown", ".csv", ".json", ".log", ".text", ".rtf"];
+
+    let content = "";
+    try {
+      if (ext === ".pdf") {
+        const dir = join(Config.pdf.outputDir, "uploads");
+        await mkdir(dir, { recursive: true });
+        const tmp = join(dir, `${randomUUID()}.pdf`);
+        await writeFile(tmp, buf);
+        try { content = await extractTextFromPdf(tmp); } finally { await unlink(tmp).catch(() => {}); }
+      } else if (TEXT_EXT.includes(ext) || (data.mimetype || "").startsWith("text/")) {
+        content = buf.toString("utf8");
+      } else {
+        return reply.status(415).send({ error: `Unsupported file type '${ext || data.mimetype}'. Upload a PDF or text file (or paste the text in the Library).` });
+      }
+    } catch (err) {
+      return reply.status(422).send({ error: `Could not read ${filename}: ${(err as Error).message}` });
+    }
+    if (!content.trim()) {
+      return reply.status(422).send({ error: `No extractable text found in ${filename} (a scanned image PDF needs OCR, which isn't wired to upload yet).` });
+    }
+
+    const title = basename(filename, ext);
+    const id = await orchestrator.knowledge.ingest({ title, content, documentType: ext.replace(".", "") || undefined, source: "upload", ownerId: getUser(req)?.profileId });
+    return reply.status(201).send({ id, title });
+  });
+
+  // A lawyer sees only documents they uploaded; partners see the whole library.
+  const docOwnerScope = (req: FastifyRequest) => (isPartner(getUser(req)) ? undefined : getUser(req)?.profileId);
+
+  app.get("/documents", async (req) => orchestrator.knowledge.listDocuments(docOwnerScope(req)));
 
   app.get("/documents/search", async (req) => {
     const { query, topK, jurisdiction, documentType } = req.query as Record<string, string>;
@@ -295,6 +415,7 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
       topK: topK ? parseInt(topK) : undefined,
       jurisdiction,
       documentType,
+      ownerId: docOwnerScope(req),
     });
   });
 
@@ -313,7 +434,7 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
   app.get("/tasks/:id/stream", async (req, reply) => {
     const { id } = req.params as { id: string };
     const task = orchestrator.getTask(id);
-    if (!task) return reply.status(404).send({ error: "Task not found" });
+    if (!task || !canViewTask(getUser(req), task)) return reply.status(404).send({ error: "Task not found" });
 
     reply.raw.setHeader("Content-Type", "text/event-stream");
     reply.raw.setHeader("Cache-Control", "no-cache");
@@ -346,17 +467,72 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
   // T18: Template REST routes
   app.get("/templates", async () => orchestrator.listTemplates());
 
+  // ── Identity + lawyer profiles ──────────────────────────────────────────────
+  app.get("/me", async (req) => {
+    const user = getUser(req);
+    return { user, authEnabled: Config.auth.enabled };
+  });
+
+  app.get("/profiles", async () => orchestrator.profiles.list());
+
+  app.post("/profiles", async (req, reply) => {
+    if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
+    try {
+      return reply.status(201).send(await orchestrator.profiles.create(req.body as { name: string; email: string; role?: string; title?: string; color?: string }));
+    } catch (err) {
+      return reply.status(400).send({ error: (err as Error).message });
+    }
+  });
+
+  app.patch("/profiles/:id", async (req, reply) => {
+    if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
+    const { id } = req.params as { id: string };
+    try {
+      return await orchestrator.profiles.update(id, req.body as Record<string, string>);
+    } catch (err) {
+      return reply.status(404).send({ error: (err as Error).message });
+    }
+  });
+
+  app.delete("/profiles/:id", async (req, reply) => {
+    if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
+    const { id } = req.params as { id: string };
+    try {
+      const ok = await orchestrator.profiles.remove(id);
+      return ok ? reply.status(200).send({ ok: true }) : reply.status(404).send({ error: "Profile not found" });
+    } catch (err) {
+      return reply.status(400).send({ error: (err as Error).message });
+    }
+  });
+
+  // ── Admin settings (presentation mode, DyTopo depth, debate, DocuSeal) ──────
+  app.get("/settings", async () => orchestrator.settings.get());
+  app.put("/settings", async (req, reply) => {
+    try {
+      const updated = await orchestrator.settings.update(req.body as Record<string, unknown>);
+      return updated;
+    } catch (err) {
+      return reply.code(400).send({ error: (err as Error).message });
+    }
+  });
+
   app.post("/tasks/from-template", async (req, reply) => {
-    const body = req.body as { templateId: string; substitutions?: Record<string, string>; documentIds?: string[] };
-    const task = await orchestrator.submitFromTemplate(body.templateId, body.substitutions, body.documentIds);
-    return reply.status(201).send(task);
+    const body = req.body as {
+      templateId: string; substitutions?: Record<string, string>; documentIds?: string[];
+      clientNumber?: string; matterNumber?: string;
+    };
+    const task = await orchestrator.submitFromTemplate(body.templateId, body.substitutions, body.documentIds,
+      { clientNumber: body.clientNumber, matterNumber: body.matterNumber });
+    const user = getUser(req);
+    if (user) orchestrator.assignLawyers(task.id, [user.profileId]);
+    return reply.status(201).send(orchestrator.getTask(task.id) ?? task);
   });
 
   // T19: get_round REST route
   app.get("/tasks/:taskId/rounds/:round", async (req, reply) => {
     const { taskId, round } = req.params as { taskId: string; round: string };
     const task = orchestrator.getTask(taskId);
-    if (!task) return reply.status(404).send({ error: "Task not found" });
+    if (!task || !canViewTask(getUser(req), task)) return reply.status(404).send({ error: "Task not found" });
     const roundState = task.rounds[parseInt(round) - 1];
     if (!roundState) return reply.status(404).send({ error: "Round not found" });
     return roundState;
@@ -378,34 +554,46 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     };
   });
 
+  // The audit log spans every matter, so it is filtered to the matters the
+  // principal may see. Partners see all (incl. system events with no taskId);
+  // a lawyer sees only audit entries for their own matters.
+  const auditVisible = (req: FastifyRequest) => {
+    const user = getUser(req);
+    if (isPartner(user)) return () => true;
+    const ids = new Set(filterVisible(user, orchestrator.listTasks()).map((t) => t.id));
+    return (e: { taskId?: string }) => !!e.taskId && ids.has(e.taskId);
+  };
+
   // Audit REST routes
   app.get("/audit", async (req) => {
     const { taskId, limit } = req.query as Record<string, string>;
-    return auditLogger.readRecent(taskId, limit ? parseInt(limit) : undefined);
+    const visible = auditVisible(req);
+    return auditLogger.readRecent(taskId, limit ? parseInt(limit) : undefined).filter(visible);
   });
 
   // Live audit SSE stream
   app.get("/audit/stream", async (req, reply) => {
+    const visible = auditVisible(req);
     reply.raw.setHeader("Content-Type", "text/event-stream");
     reply.raw.setHeader("Cache-Control", "no-cache");
     reply.raw.setHeader("Connection", "keep-alive");
     reply.raw.flushHeaders();
 
-    const send = (entry: unknown) => {
-      reply.raw.write(`data: ${JSON.stringify(entry)}\n\n`);
+    const send = (entry: { taskId?: string }) => {
+      if (visible(entry)) reply.raw.write(`data: ${JSON.stringify(entry)}\n\n`);
     };
 
     // Replay recent entries so a new subscriber catches up
     const recent = auditLogger.readRecent(undefined, 100);
     for (const e of recent) send(e);
 
-    const unsub = auditLogger.subscribe(send);
+    const unsub = auditLogger.subscribe(send as (e: unknown) => void);
     req.raw.on("close", unsub);
     return reply;
   });
 
-  await app.listen({ port: Config.api.port, host: "0.0.0.0" });
-  logger.info("REST API started", { port: Config.api.port });
+  await app.listen({ port: Config.api.port, host: Config.api.host });
+  logger.info("REST API started", { port: Config.api.port, host: Config.api.host, auth: Config.api.apiKey ? "x-api-key" : "none" });
 }
 
 // ─── Tool handler ─────────────────────────────────────────────────────────────
@@ -421,6 +609,8 @@ async function handleTool(
         description: args.description as string,
         workflowType: args.workflowType as WorkflowType,
         documentIds: args.documentIds as string[] | undefined,
+        clientNumber: args.clientNumber as string | undefined,
+        matterNumber: args.matterNumber as string | undefined,
       });
 
     case "get_task": {

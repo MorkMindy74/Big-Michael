@@ -29,6 +29,8 @@ import { auditLogger } from "./audit/index.js";
 import { AgentRegistry } from "./agents/registry.js";
 import { Agent } from "./agents/base.js";
 import { ROOT_ORCHESTRATOR, ALL_AGENT_DEFINITIONS } from "./agents/definitions.js";
+import { SettingsStore } from "./settings/index.js";
+import { ProfileStore } from "./auth/index.js";
 import { DyTopoEngine } from "./dytopo/engine.js";
 import { InterRoundMemoryStore } from "./memory/index.js";
 import { KnowledgeStore } from "./knowledge/index.js";
@@ -79,6 +81,8 @@ export class Orchestrator {
   readonly memory: InterRoundMemoryStore;
   readonly knowledge: KnowledgeStore;
   readonly templates: TemplateStore;
+  readonly settings: SettingsStore;
+  readonly profiles: ProfileStore;
 
   private readonly tasks: Map<string, Task> = new Map();
   private readonly gateEmitter = new EventEmitter();
@@ -91,9 +95,14 @@ export class Orchestrator {
     this.memory = new InterRoundMemoryStore();
     this.knowledge = new KnowledgeStore();
     this.templates = new TemplateStore();
+    this.settings = new SettingsStore();
+    this.profiles = new ProfileStore();
   }
 
   async init(): Promise<void> {
+    // Load persisted admin settings first so they apply before any task runs.
+    await this.settings.init();
+    await this.profiles.init();
     await Promise.all([
       this.registry.init(),
       this.memory.init(),
@@ -134,11 +143,15 @@ export class Orchestrator {
     description: string;
     workflowType: WorkflowType;
     documentIds?: string[];
+    clientNumber?: string;
+    matterNumber?: string;
   }): Promise<Task> {
     const phases = PHASE_SEQUENCES[params.workflowType];
     const task: Task = {
       id: uuidv4(),
       description: params.description,
+      clientNumber: params.clientNumber?.trim() || undefined,
+      matterNumber: params.matterNumber?.trim() || undefined,
       documentIds: params.documentIds ?? [],
       workflowType: params.workflowType,
       status: "pending",
@@ -177,6 +190,29 @@ export class Orchestrator {
     return Array.from(this.tasks.values());
   }
 
+  /** Delete a matter. Returns false if it didn't exist. */
+  deleteTask(taskId: string): boolean {
+    const existed = this.tasks.delete(taskId);
+    if (existed) {
+      this.persistTasks().catch((err) => logger.warn("Failed to persist tasks", { error: err.message }));
+      auditLogger.write({ event: "task.deleted", taskId, data: {} });
+      logger.info("Task deleted", { taskId });
+    }
+    return existed;
+  }
+
+  /** Set the lawyer(s) assigned to a matter (a partner action). */
+  assignLawyers(taskId: string, lawyerIds: string[]): Task | null {
+    const task = this.tasks.get(taskId);
+    if (!task) return null;
+    const valid = [...new Set(lawyerIds)].filter((id) => this.profiles.get(id));
+    task.assignedLawyerIds = valid;
+    task.updatedAt = new Date();
+    this.persistTasks().catch((err) => logger.warn("Failed to persist tasks", { error: err.message }));
+    auditLogger.write({ event: "task.assigned", taskId, data: { lawyerIds: valid } });
+    return task;
+  }
+
   listTemplates(): TaskTemplate[] {
     return this.templates.list();
   }
@@ -185,11 +221,12 @@ export class Orchestrator {
     templateId: string,
     substitutions: Record<string, string> = {},
     documentIds?: string[],
+    refs?: { clientNumber?: string; matterNumber?: string },
   ): Promise<Task> {
     const template = this.templates.get(templateId);
     if (!template) throw new Error(`Template not found: ${templateId}`);
     const { description, workflowType } = instantiateTemplate(template, substitutions);
-    return this.submitTask({ description, workflowType, documentIds });
+    return this.submitTask({ description, workflowType, documentIds, ...refs });
   }
 
   /**

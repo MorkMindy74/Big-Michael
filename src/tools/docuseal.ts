@@ -78,7 +78,7 @@ export const docusealListTemplatesTool: ToolImpl = {
     },
   },
   async execute(input, _ctx) {
-    if (!Config.docuseal.apiKey) {
+    if (!Config.docuseal.enabled || !Config.docuseal.apiKey) {
       return { warning: "DOCUSEAL_API_KEY not configured — DocuSeal unavailable", templates: [] };
     }
     const limit = (input.limit as number | undefined) ?? 20;
@@ -110,7 +110,7 @@ export const docusealSendForSigningTool: ToolImpl = {
         },
         documentName: {
           type: "string",
-          description: "Human-readable name for the document, e.g. 'GDPR DPA 2026'.",
+          description: "Human-readable name for the document, e.g. 'Mutual NDA 2026'.",
         },
         signers: {
           type: "array",
@@ -137,7 +137,7 @@ export const docusealSendForSigningTool: ToolImpl = {
     },
   },
   async execute(input, _ctx) {
-    if (!Config.docuseal.apiKey) {
+    if (!Config.docuseal.enabled || !Config.docuseal.apiKey) {
       return {
         warning: "DOCUSEAL_API_KEY not configured — DocuSeal unavailable",
         submissionId: null,
@@ -239,7 +239,7 @@ export const docusealSubmissionStatusTool: ToolImpl = {
     },
   },
   async execute(input, _ctx) {
-    if (!Config.docuseal.apiKey) {
+    if (!Config.docuseal.enabled || !Config.docuseal.apiKey) {
       return { warning: "DOCUSEAL_API_KEY not configured — DocuSeal unavailable" };
     }
 

@@ -22,11 +22,11 @@ Here's what happens when you hand it a matter 👇
 
 🔹 **It runs on your terms.** Local models when privacy matters, or tiered cloud routing for quality. Open source.
 
-🌉 **And the part I have to say out loud:** I didn't hand-write a bench of 118 legal agents. **Claude** — Anthropic's coding agent — did the heavy lifting, pair-programming with me for hours: the orchestration engine, the agent bench, the security pass, the whole console. So an AI built a multi-agent AI that runs a little courtroom of smaller AIs arguing about the law. It's turtles all the way down — and Claude made them good. 🐢
+🌉 By now a reasonable person is thinking: *"118 AIs that argue case law and cite real cases — and an AI built the whole thing? Buddy, I've got a bridge to sell you."* Fair. Except this bridge is real, it's open source, and you can walk across it yourself. No sale, no toll. (And yes — **Claude**, Anthropic's coding agent, built most of it with me. An AI building a multi-agent AI that argues with itself about the law. Turtles all the way down — and Claude made them good. 🐢)
 
-The screenshots are from a real matter — the bench deliberating, the round-by-round communication graph, the human gates, and the cited synthesis at the end.
+The screenshots below are from a live matter: the bench deliberating, the communication graph, the human gates, and the cited synthesis at the end.
 
-Curious what a 100-agent bench does to *your* hardest legal question. More soon. 👀
+Curious what a 100-agent bench does to *your* hardest legal question. The bridge's right there. 👀
 
 #LegalTech #LegalAI #MultiAgent #AI #LegalInnovation #Lawtech #OpenSource
 

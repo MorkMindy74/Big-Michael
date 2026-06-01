@@ -22,7 +22,7 @@ Here's what happens when you hand it a matter 👇
 
 🔹 **It runs on your terms.** Local models when privacy matters, or tiered cloud routing for quality. Open source.
 
-🌉 **And the bridge, because someone has to say it:** I did not hand-write a bench of 118 legal agents on my own. I built most of Big Michael *with* Claude — Anthropic's coding agent — pair-programming for hours. So yes: an AI helped me build a multi-agent AI that runs a little courtroom of smaller AIs that argue about the law. It's turtles all the way down, and honestly, the turtles are good.
+🌉 **And the part I have to say out loud:** I didn't hand-write a bench of 118 legal agents. **Claude** — Anthropic's coding agent — did the heavy lifting, pair-programming with me for hours: the orchestration engine, the agent bench, the security pass, the whole console. So an AI built a multi-agent AI that runs a little courtroom of smaller AIs arguing about the law. It's turtles all the way down — and Claude made them good. 🐢
 
 The screenshots are from a real matter — the bench deliberating, the round-by-round communication graph, the human gates, and the cited synthesis at the end.
 

@@ -446,8 +446,9 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
 
   app.get("/documents/search", async (req) => {
     const { query, topK, jurisdiction, documentType } = req.query as Record<string, string>;
+    const topKNum = topK ? parseInt(topK, 10) : undefined;
     return orchestrator.knowledge.search(query, {
-      topK: topK ? parseInt(topK) : undefined,
+      topK: topKNum && Number.isInteger(topKNum) && topKNum > 0 ? topKNum : undefined,
       jurisdiction,
       documentType,
       ownerId: docOwnerScope(req),
@@ -455,21 +456,25 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
   });
 
   app.get("/agents", async (req) => {
-    const { tier, domain } = req.query as Record<string, string>;
-    if (tier || domain) {
-      return orchestrator.registry.search("", {
-        tier: tier ? parseInt(tier) as 0 | 1 | 2 | 3 : undefined,
-        topK: 100,
-      });
+    const { tier } = req.query as Record<string, string>;
+    if (tier) {
+      const tierNum = parseInt(tier, 10);
+      const validTier = ([0, 1, 2, 3] as const).find((t) => t === tierNum);
+      return orchestrator.registry.search("", { tier: validTier, topK: 100 });
     }
     return orchestrator.registry.listAll();
   });
 
   // T17: SSE streaming endpoint
+  const MAX_SSE_LISTENERS_PER_TASK = 50;
   app.get("/tasks/:id/stream", async (req, reply) => {
     const { id } = req.params as { id: string };
     const task = orchestrator.getTask(id);
     if (!task || !canViewTask(getUser(req), task)) return reply.status(404).send({ error: "Task not found" });
+
+    if (orchestrator.progressEmitter.listenerCount(`task:${id}`) >= MAX_SSE_LISTENERS_PER_TASK) {
+      return reply.status(429).send({ error: "Too many concurrent streams for this task" });
+    }
 
     reply.raw.setHeader("Content-Type", "text/event-stream");
     reply.raw.setHeader("Cache-Control", "no-cache");
@@ -508,7 +513,13 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     return { user, authEnabled: Config.auth.enabled };
   });
 
-  app.get("/profiles", async () => orchestrator.profiles.list());
+  // Partners see full profiles (including email for contact/admin purposes).
+  // Lawyers see only the display fields needed to render the roster UI.
+  app.get("/profiles", async (req) => {
+    const profiles = orchestrator.profiles.list();
+    if (isPartner(getUser(req))) return profiles;
+    return profiles.map(({ id, name, title, color, role }) => ({ id, name, title, color, role }));
+  });
 
   app.get("/profiles/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
@@ -628,8 +639,15 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
   });
 
   // ── Admin settings (presentation mode, DyTopo depth, debate, DocuSeal) ──────
-  app.get("/settings", async () => orchestrator.settings.get());
+  // Both GET and PUT are partner-only: GET exposes the DocuSeal URL and
+  // enabled state; PUT can redirect DocuSeal requests (SSRF) or weaken
+  // debate/gate settings.
+  app.get("/settings", async (req, reply) => {
+    if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
+    return orchestrator.settings.get();
+  });
   app.put("/settings", async (req, reply) => {
+    if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
     try {
       const updated = await orchestrator.settings.update(req.body as Record<string, unknown>);
       return updated;
@@ -653,9 +671,11 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
   // T19: get_round REST route
   app.get("/tasks/:taskId/rounds/:round", async (req, reply) => {
     const { taskId, round } = req.params as { taskId: string; round: string };
+    const roundNum = parseInt(round, 10);
+    if (!Number.isInteger(roundNum) || roundNum < 1) return reply.status(400).send({ error: "Invalid round number" });
     const task = orchestrator.getTask(taskId);
     if (!task || !canViewTask(getUser(req), task)) return reply.status(404).send({ error: "Task not found" });
-    const roundState = task.rounds[parseInt(round) - 1];
+    const roundState = task.rounds[roundNum - 1];
     if (!roundState) return reply.status(404).send({ error: "Round not found" });
     return roundState;
   });
@@ -690,7 +710,8 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
   app.get("/audit", async (req) => {
     const { taskId, limit } = req.query as Record<string, string>;
     const visible = auditVisible(req);
-    return auditLogger.readRecent(taskId, limit ? parseInt(limit) : undefined).filter(visible);
+    const limitNum = limit ? parseInt(limit, 10) : undefined;
+    return auditLogger.readRecent(taskId, limitNum && Number.isInteger(limitNum) && limitNum > 0 ? limitNum : undefined).filter(visible);
   });
 
   // Live audit SSE stream
@@ -793,11 +814,19 @@ async function handleTool(
       return roundState;
     }
 
-    case "get_audit":
-      return auditLogger.readRecent(
+    case "get_audit": {
+      // MCP runs over stdio as the LOCAL_PARTNER (full partner access).
+      // Apply the same visibility filter as the REST endpoint so the pattern
+      // is explicit and safe if the transport is ever changed.
+      const allEntries = auditLogger.readRecent(
         args.taskId as string | undefined,
         args.limit as number | undefined,
       );
+      // LOCAL_PARTNER is a partner — sees every entry. Filter is a no-op but
+      // makes the access intent explicit and consistent with the REST audit route.
+      const visibleIds = new Set(orch.listTasks().map((t) => t.id));
+      return allEntries.filter((e) => !e.taskId || visibleIds.has(e.taskId));
+    }
 
     default:
       throw new Error(`Unknown tool: ${name}`);

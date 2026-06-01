@@ -100,7 +100,16 @@ function applyToConfig(s: DeepPartial<AppSettings>): void {
   }
   if (s.docuseal) {
     if (typeof s.docuseal.enabled === "boolean") Config.docuseal.enabled = s.docuseal.enabled;
-    if (typeof s.docuseal.url === "string") Config.docuseal.url = s.docuseal.url.trim();
+    if (typeof s.docuseal.url === "string") {
+      const trimmed = s.docuseal.url.trim();
+      try {
+        const u = new URL(trimmed);
+        if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("protocol");
+        Config.docuseal.url = trimmed;
+      } catch {
+        throw new Error(`Invalid DocuSeal URL '${trimmed}': must be an http or https URL`);
+      }
+    }
     if (typeof s.docuseal.apiKey === "string") Config.docuseal.apiKey = s.docuseal.apiKey.trim();
   }
 }

@@ -1,0 +1,40 @@
+Big Michael
+Copyright (C) 2026 Discover Legal
+
+This distribution is licensed under the GNU Affero General Public License,
+version 3 (AGPL-3.0-only). See the LICENSE file for the full text.
+
+Because this work bundles and builds upon an AGPL-3.0 component (Mike, below),
+the combined work is distributed under the AGPL-3.0. If you run a modified
+version of this software to provide a network service, AGPL-3.0 section 13
+requires you to offer the complete corresponding source to its users.
+
+================================================================================
+Third-party components
+================================================================================
+
+1. Lavern ("The Shem")
+   Source:  https://github.com/AnttiHero/lavern
+   License: Apache License, Version 2.0
+   Used in: agents/lavern/  (agent definitions + system prompts)
+   Notice:  Lavern's agent prompts have been MODIFIED for this project —
+            extracted from Lavern's TypeScript source and reformatted into
+            JSON LavernAgentConfig records, with tool permissions remapped to
+            Big Michael's tool registry. The underlying prompt text remains
+            (C) the Lavern authors under the Apache License, Version 2.0.
+            Apache-2.0 is included in this combined AGPL-3.0 work as permitted
+            by Apache-2.0; the Lavern portions retain their Apache-2.0 grant.
+
+2. Mike (mikeoss.com)
+   Source:  https://github.com/willchen96/mike
+   License: GNU Affero General Public License, version 3.0
+   Used in: workflows/mikeoss/  (built-in workflow prompts) and ported
+            capabilities (tabular review, Word document generation,
+            tracked-change redlining) in src/.
+   Notice:  Mike's workflow prompts and capability logic have been MODIFIED —
+            built-in workflows converted to MikeOSSWorkflow JSON, and selected
+            backend capabilities ported to Big Michael's tool/orchestration
+            layer. These portions remain (C) the Mike authors under AGPL-3.0.
+
+Trademarks: "Lavern", "The Shem", and "Mike" are the marks of their respective
+authors and are used here only for attribution; no endorsement is implied.

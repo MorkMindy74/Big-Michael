@@ -1,12 +1,13 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Discover Legal
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//     http://www.apache.org/licenses/LICENSE-2.0
+// This program is free software: you can redistribute it and/or modify it
+// under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version. See <https://www.gnu.org/licenses/>.
 
 import { v4 as uuidv4 } from "uuid";
 import { logger } from "../logger.js";
+import { Config } from "../config.js";
 import { selectModel, estimateComplexity, modelLabel } from "../routing/model.js";
 import { getProvider, resolveModelId } from "../providers/index.js";
 import type { ProviderMessage, ProviderToolResultBlock } from "../providers/index.js";
@@ -141,7 +142,7 @@ export class Agent {
     const messages: ProviderMessage[] = [{ role: "user", content: initialPrompt }];
     let finalText = "";
 
-    for (let iteration = 0; iteration < 10; iteration++) {
+    for (let iteration = 0; iteration < Config.agents.maxToolIterations; iteration++) {
       const response = await provider.chat({
         model: bareModel,
         maxTokens,

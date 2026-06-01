@@ -1,9 +1,9 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Discover Legal
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//     http://www.apache.org/licenses/LICENSE-2.0
+// This program is free software: you can redistribute it and/or modify it
+// under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version. See <https://www.gnu.org/licenses/>.
 
 // ─── Agent taxonomy ───────────────────────────────────────────────────────────
 
@@ -237,6 +237,22 @@ export interface Task {
   createdAt: Date;
   updatedAt: Date;
   completedAt?: Date;
+  /** Structured tabular output — populated for the `tabulate` workflow. */
+  table?: TaskTable;
+}
+
+/** Structured spreadsheet-style output for the `tabulate` workflow. */
+export interface TaskTable {
+  /** Display column headers, in order. */
+  columns: string[];
+  /**
+   * One object per row. Keys include every column name plus an internal
+   * `_findingId` linking the row back to its source finding.
+   */
+  rows: Array<Record<string, string>>;
+  /** Unique finding IDs the rows were derived from. */
+  sourceFindingIds: string[];
+  generatedAt: Date;
 }
 
 // ─── Knowledge store ─────────────────────────────────────────────────────────

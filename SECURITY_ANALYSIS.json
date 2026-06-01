@@ -1,0 +1,189 @@
+{
+  "analysis_date": "2026-05-31",
+  "codebase": "Big Michael - Multi-Agent Legal AI Platform",
+  "vulnerabilities": [
+    {
+      "severity": "high",
+      "file": "src/mcp/server.ts",
+      "line": null,
+      "title": "Missing API Authentication",
+      "description": "REST API and MCP endpoints lack authentication/authorization mechanisms. Any caller can submit tasks, access sensitive task data, approve/reject gates, and ingest documents. No API key validation, JWT tokens, or session management visible.",
+      "impact": "Unauthorized access to legal task processing, findings, and gate approvals. Complete system compromise.",
+      "recommendation": "Implement API authentication (API key, OAuth2, or JWT). Add role-based access control (RBAC) for different endpoint groups."
+    },
+    {
+      "severity": "high",
+      "file": "src/config.ts",
+      "line": null,
+      "title": "Exposed Secrets in Environment Configuration",
+      "description": "Critical API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, QDRANT_API_KEY, DOCUSEAL_API_KEY, TAVILY_API_KEY, INFISICAL_CLIENT_SECRET) are required and loaded from process.env. If .env file is committed to version control, exposed in logs, or environment variables are accessible, all secrets are compromised.",
+      "impact": "Complete compromise of all integrated services (Anthropic, OpenAI, Qdrant, DocuSeal, Tavily, Infisical). Unauthorized API usage, data theft, and service disruption.",
+      "recommendation": "Ensure .env is in .gitignore. Use a secrets manager (Infisical as intended) for ALL secrets, not just bootstrap vars. Rotate all exposed keys immediately. Add .env validation to warn on missing keys."
+    },
+    {
+      "severity": "high",
+      "file": "src/audit/index.ts",
+      "line": 30,
+      "title": "Unencrypted Audit Log Disk Storage",
+      "description": "Audit logs are appended to an unencrypted JSONL file (./audit.jsonl by default). This file contains model calls, task IDs, agent decisions, and tool execution records. The file path is configurable but not validated. No access controls specified.",
+      "impact": "Sensitive task information, findings, and reasoning steps exposed if filesystem is accessible. Audit trail tampering possible if file permissions are weak.",
+      "recommendation": "Encrypt audit logs at rest (AES-256). Implement strict file permissions (600). Use a dedicated audit database with access controls. Consider rotating audit logs periodically."
+    },
+    {
+      "severity": "high",
+      "file": "src/agents/base.ts",
+      "line": 85,
+      "title": "Unvalidated Tool Execution in Agentic Loop",
+      "description": "The `runAgenticLoop` function executes tools from `this.definition.allowedTools` without apparent validation of tool inputs. Tool schemas are defined but input validation against the schema is not visible in the provided code. Agents can call any tool in their allowedTools list with arbitrary inputs.",
+      "impact": "Agent-driven tool injection. If an agent's tool allowlist includes dangerous tools (file write, code execution, API calls to external systems), it can perform unauthorized actions. Prompt injection via tool inputs could redirect execution.",
+      "recommendation": "Implement strict input validation for all tool calls against their JSON schemas. Use a whitelist of safe tools per agent tier. Sandbox tool execution with capability restrictions."
+    },
+    {
+      "severity": "high",
+      "file": "src/tools/index.ts",
+      "line": null,
+      "title": "Tool Registry and Implementation Not Fully Visible",
+      "description": "The global tool registry (`globalToolRegistry`) is referenced but its contents and implementations are not provided. Tool schemas are passed to agents, but actual tool implementations are a security black box.",
+      "impact": "Cannot assess whether tools perform proper input sanitization, authorization checks, or safe error handling. Tools may have hardcoded credentials, SQL injection, command injection, or path traversal vulnerabilities.",
+      "recommendation": "Review all tool implementations in src/tools/ for: input validation, error message safety, command injection, path traversal, SQL injection, and credential handling. Implement a tool capability audit."
+    },
+    {
+      "severity": "medium",
+      "file": "src/knowledge/index.ts",
+      "line": 40,
+      "title": "Unvalidated Document Ingestion",
+      "description": "The `ingest()` method accepts arbitrary document content without validation. No checks for file type, size limits, malicious content, or policy enforcement. Documents are stored and later retrieved/processed by agents.",
+      "impact": "Injection of malicious content into the knowledge base. Agents could be manipulated by adversarial documents. No audit trail of what documents were ingested by whom.",
+      "recommendation": "Add document ingestion validation: file type whitelist, size limits (e.g., 50MB max), virus scanning, content policy checks. Log all ingestion events with uploader identification."
+    },
+    {
+      "severity": "medium",
+      "file": "ui/vite.config.js",
+      "line": 6,
+      "title": "Insecure Vite Proxy Configuration",
+      "description": "Vite dev server proxies all `/tasks`, `/documents`, `/agents`, etc. requests to the backend via `changeOrigin: true`. The backend URL comes from `process.env.BIG_MICHAEL_API` or defaults to localhost:3101. In production, this proxy setup should not be used. If deployed, the Vite server becomes a CORS-bypassing proxy.",
+      "impact": "In development, acceptable. In production, if Vite proxy is exposed, it becomes a CORS bypass mechanism allowing unauthorized requests to the backend. XSS attacks could target the frontend to make authenticated requests via the proxy.",
+      "recommendation": "Use separate frontend and backend deployment. Do NOT expose Vite dev proxy in production. Implement CORS properly on the backend REST API. Use HTTPS with secure cookies (SameSite=Strict)."
+    },
+    {
+      "severity": "medium",
+      "file": "src/adapters/lavern.ts",
+      "line": 60,
+      "title": "Unvalidated External Agent Configuration Loading",
+      "description": "The `load()` method reads all .json files from a directory without validation. The `fromConfigs()` method directly uses loaded Lavern agent configs to construct AgentDefinitions. No schema validation on Lavern agent configs.",
+      "impact": "If the agent config directory is writable by untrusted users, malicious agent definitions could be injected. Agents could have system prompts that cause harmful behavior, tool lists that exceed their tier permissions, or metadata that breaks DyTopo routing.",
+      "recommendation": "Validate all loaded agent configs against a strict JSON schema. Restrict write access to the agent config directory to the application user only. Sign agent configs cryptographically and verify signatures on load."
+    },
+    {
+      "severity": "medium",
+      "file": "src/providers/anthropic.ts, src/providers/ollama.ts",
+      "line": null,
+      "title": "API Key Passed Unencrypted Over HTTP",
+      "description": "Local Ollama connections (localhost:11434) use HTTP by default. If a developer runs Ollama over SSH tunnel or network connection without HTTPS, API keys and prompts are transmitted in plaintext.",
+      "impact": "Network sniffing could reveal sensitive prompts, task descriptions, and API keys if Ollama is on an untrusted network.",
+      "recommendation": "Default to HTTPS for all remote connections. Enforce HTTPS for Ollama and OpenAI-compat endpoints in non-localhost configurations. Document the security implications of local inference."
+    },
+    {
+      "severity": "medium",
+      "file": "src/config.ts",
+      "line": 25,
+      "title": "Missing API Key Rotation / Expiration Mechanism",
+      "description": "API keys are loaded once at startup from environment variables. There is no mechanism to rotate, revoke, or refresh keys during runtime. A compromised key remains active until the application is restarted.",
+      "impact": "If a key is compromised, the attacker has full access until the application restarts. No way to invalidate a leaked key without downtime.",
+      "recommendation": "Implement key rotation: support reading keys from a secrets manager with automatic refresh. Add a key versioning system. Implement rate limiting and anomaly detection to detect compromised keys."
+    },
+    {
+      "severity": "medium",
+      "file": "src/mcp/server.ts",
+      "line": null,
+      "title": "Missing CORS and CSRF Protections on REST API",
+      "description": "The REST API setup in Fastify is not fully shown, but no CORS headers, CSRF tokens, or Content Security Policy are visible in the provided code.",
+      "impact": "Cross-site request forgery (CSRF) attacks from attacker websites. Unauthorized cross-origin requests if CORS is misconfigured (e.g., allowing all origins).",
+      "recommendation": "Configure Fastify CORS with explicit allowed origins (whitelist). Implement CSRF tokens for state-changing requests (POST/PUT/DELETE). Add Content-Security-Policy headers. Use SameSite cookies."
+    },
+    {
+      "severity": "low",
+      "file": "src/orchestrator.ts",
+      "line": 280,
+      "title": "Weak JSON Parsing Error Handling",
+      "description": "The `parseJsonObject()` function uses try-catch to silently fail on invalid JSON. Error messages are swallowed, but function returns undefined on parse failure. No logging of parse failures.",
+      "impact": "Silent failures could hide malformed responses from agents. Difficult to debug issues. No audit trail of parsing failures.",
+      "recommendation": "Log all parse failures with context (agent ID, round). Return structured error objects instead of undefined. Implement strict validation with detailed error messages."
+    },
+    {
+      "severity": "low",
+      "file": "src/audit/index.ts",
+      "line": 42,
+      "title": "Audit Logger Error Swallowing",
+      "description": "The `write()` method silently swallows disk write errors with `.catch(() => undefined)`. If the audit log fails, there is no alerting or fallback mechanism.",
+      "impact": "Audit events could be lost silently. Compliance and forensics suffering. No detection of disk failures or permission issues.",
+      "recommendation": "Log disk write failures to stderr/syslog. Implement a circuit breaker: after N consecutive failures, alert or escalate. Consider using a remote audit log service as fallback."
+    },
+    {
+      "severity": "low",
+      "file": "src/knowledge/index.ts",
+      "line": 45,
+      "title": "Missing Rate Limiting on Document Search",
+      "description": "The `search()` method can be called without rate limits. An attacker could spam semantic searches to extract the full knowledge base or cause CPU/I/O exhaustion.",
+      "impact": "Denial of service via knowledge base search. Information disclosure through exhaustive search.",
+      "recommendation": "Implement per-user rate limiting on search queries (e.g., 10 req/min). Cache popular queries. Monitor search patterns for anomalies."
+    },
+    {
+      "severity": "low",
+      "file": "src/providers/index.ts",
+      "line": 30,
+      "title": "No Validation of Model IDs",
+      "description": "Model IDs are passed directly to the provider based on string prefixes (ollama:, local:). A user could pass a malicious model ID that gets passed through.",
+      "impact": "Model ID injection could cause unexpected behavior if a provider doesn't validate the model name. Low risk but best to validate.",
+      "recommendation": "Whitelist allowed model IDs per provider. Validate against a known good set before passing to the provider."
+    },
+    {
+      "severity": "low",
+      "file": ".env (implicit)",
+      "line": null,
+      "title": "No .env Encryption or Validation",
+      "description": "The application relies on a .env file loaded by dotenv. There is no mechanism to validate the .env file against a schema, encrypt it, or warn about missing critical vars.",
+      "impact": "Misconfigured deployment could run with defaults, wrong API endpoints, or missing security settings. Committed .env files leak secrets.",
+      "recommendation": "Add a .env.schema file that documents required and optional vars. Implement startup validation that fails if critical vars are missing or invalid. Encrypt .env at rest."
+    }
+  ],
+  "riskScore": 72,
+  "riskScoreBreakdown": {
+    "authentication": 100,
+    "secrets_management": 75,
+    "audit_logging": 70,
+    "input_validation": 65,
+    "error_handling": 55,
+    "rate_limiting": 50,
+    "documentation": 40
+  },
+  "recommendations": [
+    "CRITICAL: Implement API authentication (API keys, JWT, or OAuth2) on all REST and MCP endpoints immediately.",
+    "CRITICAL: Audit all tool implementations in src/tools/ for input validation, command injection, path traversal, and credential handling.",
+    "HIGH: Encrypt audit logs at rest and implement access controls. Consider using a remote audit service.",
+    "HIGH: Review document ingestion flow for malicious content. Add size limits, type validation, and virus scanning.",
+    "HIGH: Validate all external agent configurations (Lavern adapters) against a strict JSON schema.",
+    "MEDIUM: Implement CORS, CSRF, and CSP headers on the REST API. Use SameSite cookies.",
+    "MEDIUM: Add rate limiting on knowledge search, task submission, and gate operations.",
+    "MEDIUM: Rotate API keys monthly. Support key versions and implement key revocation.",
+    "MEDIUM: Use HTTPS for all non-localhost connections, including Ollama and local inference.",
+    "MEDIUM: Add comprehensive logging and alerting for security events (failed auth, tool errors, audit failures).",
+    "LOW: Validate model IDs against a whitelist before passing to providers.",
+    "LOW: Add .env schema validation at startup. Document all environment variables with security implications.",
+    "DOCUMENTATION: Create a security.md documenting the threat model, security assumptions, and mitigation strategies."
+  ],
+  "summary": {
+    "total_vulnerabilities": 13,
+    "high": 5,
+    "medium": 6,
+    "low": 2,
+    "overall_risk": "HIGH",
+    "primary_concerns": [
+      "No API authentication - system is completely open",
+      "Secrets in environment variables - risk of exposure",
+      "Tool execution without validation - agent-driven injection possible",
+      "Unencrypted audit logs - sensitive information at risk",
+      "Missing error handling and rate limiting"
+    ]
+  }
+}

@@ -1,0 +1,226 @@
+{
+  "audit_metadata": {
+    "timestamp": "2026-05-31T00:00:00Z",
+    "project": "Big Michael - Multi-agent Legal AI",
+    "audit_scope": [
+      "src/config.ts",
+      "src/index.ts",
+      "src/mcp/server.ts",
+      "src/audit/index.ts",
+      "src/agents/base.ts",
+      "src/tools/pdf.ts",
+      "src/secrets/index.ts",
+      "src/tools/index.ts"
+    ],
+    "severity_breakdown": {
+      "critical": 4,
+      "high": 5,
+      "medium": 3,
+      "low": 2
+    },
+    "total_findings": 14
+  },
+  "findings": [
+    {
+      "id": "SEC-001",
+      "severity": "CRITICAL",
+      "category": "Insecure API Key Handling",
+      "title": "Empty String Default for OpenAI API Key",
+      "file": "src/config.ts",
+      "line": 28,
+      "code_snippet": "apiKey: process.env.OPENAI_API_KEY ?? \"\"",
+      "description": "The embeddings.apiKey defaults to an empty string when OPENAI_API_KEY is not set. This allows the application to proceed without a required credential, potentially leading to API calls with empty authentication that may fail silently or expose the system to error-based information disclosure.",
+      "risk": "An attacker or misconfigured deployment could make embedding requests without proper authentication, potentially leading to service degradation or unintended API usage patterns.",
+      "recommendation": "Either make OpenAI API key required (throw error if missing) or explicitly handle the case where embeddings are disabled. Use conditional configuration: Config.embeddings.enabled: boolean with validation in the embeddings module.",
+      "remediation": "Change line 28 to check for required API key when using external embeddings, or document that LOCAL_EMBEDDINGS=true must be set when OPENAI_API_KEY is unavailable."
+    },
+    {
+      "id": "SEC-002",
+      "severity": "CRITICAL",
+      "category": "Insecure API Key Handling",
+      "title": "Empty String Default for Tavily API Key",
+      "file": "src/config.ts",
+      "line": 72,
+      "code_snippet": "tavilyApiKey: process.env.TAVILY_API_KEY ?? \"\"",
+      "description": "The search.tavilyApiKey defaults to an empty string. The web_search tool checks for this but will silently return empty results, potentially leading to silent failures in legal research tasks.",
+      "risk": "Agents attempting to perform web searches will receive no results without warning, potentially producing incomplete legal analyses.",
+      "recommendation": "Either require the API key or explicitly document that web search is optional. Consider adding a warning to the tool schema or requiring explicit configuration.",
+      "remediation": "In src/tools/index.ts web_search tool, require API key and throw error with clear message: Web search requires TAVILY_API_KEY configuration."
+    },
+    {
+      "id": "SEC-003",
+      "severity": "CRITICAL",
+      "category": "Insecure API Key Handling",
+      "title": "Empty String Default for DocuSeal API Key",
+      "file": "src/config.ts",
+      "line": 117,
+      "code_snippet": "apiKey: process.env.DOCUSEAL_API_KEY ?? \"\"",
+      "description": "The docuseal.apiKey defaults to an empty string. Tools that attempt to use DocuSeal for e-signatures will fail silently or make unauthenticated requests.",
+      "risk": "E-signature operations may fail unexpectedly, and legal documents may be processed without proper authentication tracking.",
+      "recommendation": "Require DocuSeal API key when e-signature tools are enabled, or disable the tools when the API key is missing.",
+      "remediation": "Add validation in the docuseal tool implementations to check for non-empty API key and throw descriptive error if missing."
+    },
+    {
+      "id": "SEC-004",
+      "severity": "CRITICAL",
+      "category": "Command Injection / Path Traversal",
+      "title": "Unsafe Python Subprocess Execution with Unvalidated Arguments",
+      "file": "src/tools/pdf.ts",
+      "line": 32,
+      "code_snippet": "const child = spawn(python, [SCRIPT, operation, JSON.stringify(args)])",
+      "description": "The PDF tool passes user-controlled arguments directly to a Python subprocess. While spawn() without shell=true is safer than shell execution, the path parameter comes directly from tool input without validation. An agent calling pdf_extract_text with malicious path parameter could attempt path traversal.",
+      "risk": "Attackers could use path traversal sequences (../../etc/passwd) to access arbitrary files on the system, or craft inputs to exploit the Python script.",
+      "recommendation": "Validate the path parameter to ensure it does not contain path traversal sequences. Validate the operation parameter against a whitelist of allowed operations.",
+      "remediation": "Add input validation before spawn(): validate operation is in [extract_text, extract_tables, generate, ocr], and sanitize path to prevent ../ traversal."
+    },
+    {
+      "id": "SEC-005",
+      "severity": "HIGH",
+      "category": "Missing Input Validation",
+      "title": "No Type Validation on REST API Request Bodies",
+      "file": "src/mcp/server.ts",
+      "line": 233,
+      "code_snippet": "const body = req.body as { description: string; workflowType: WorkflowType; documentIds?: string[] }",
+      "description": "Multiple REST API endpoints use unsafe type assertions on request bodies without runtime validation. Line 233 assumes the body structure is correct, but Fastify does not enforce this. An attacker could send malformed requests with incorrect types or additional properties.",
+      "risk": "Type injection, unexpected field values, or oversized payloads could cause runtime errors, expose implementation details, or enable injection attacks in downstream processing.",
+      "recommendation": "Use a validation library (zod, io-ts, or Fastify schema validation) to validate all request bodies, query parameters, and URL parameters before processing.",
+      "remediation": "Add Fastify schema validation to all routes using zod or a similar library for runtime type checking."
+    },
+    {
+      "id": "SEC-006",
+      "severity": "HIGH",
+      "category": "Missing Input Validation",
+      "title": "Unvalidated Query Parameters in Document Search",
+      "file": "src/mcp/server.ts",
+      "line": 287,
+      "code_snippet": "const { query, topK, jurisdiction, documentType } = req.query as Record<string, string>",
+      "description": "The /documents/search endpoint accepts query parameters without validation. The query parameter is passed directly to knowledge.search(). Oversized query strings or specially crafted JSON/SQL-like patterns could be exploited.",
+      "risk": "Denial of service through extremely large query strings, potential injection into vector database queries if knowledge.search() does not sanitize input.",
+      "recommendation": "Validate query parameter length (e.g., max 1000 chars), topK range (e.g., 1-100), and whitelist jurisdiction/documentType values if applicable.",
+      "remediation": "Add query parameter validation: check query.length <= 1000, parseInt(topK) should be between 1 and 100."
+    },
+    {
+      "id": "SEC-007",
+      "severity": "HIGH",
+      "category": "Missing Input Validation / DoS",
+      "title": "Unvalidated Audit Log Query Parameters",
+      "file": "src/mcp/server.ts",
+      "line": 377,
+      "code_snippet": "const { taskId, limit } = req.query as Record<string, string>; return auditLogger.readRecent(taskId, limit ? parseInt(limit) : undefined)",
+      "description": "The /audit endpoint accepts taskId and limit query parameters without validation. An attacker could request extremely large limits (e.g., limit=999999999) to cause memory exhaustion or DoS.",
+      "risk": "Denial of service through memory exhaustion, potential information disclosure if an attacker can request audit logs for arbitrary tasks without authorization checks.",
+      "recommendation": "Validate limit parameter (e.g., max 1000), and ideally require authentication/authorization before allowing arbitrary taskId queries.",
+      "remediation": "Add validation: limit = Math.min(parseInt(limit || '200'), 1000). Consider adding authentication checks for accessing audit logs of other tasks."
+    },
+    {
+      "id": "SEC-008",
+      "severity": "HIGH",
+      "category": "Authentication / Authorization Gap",
+      "title": "No Authentication or Authorization on REST API Endpoints",
+      "file": "src/mcp/server.ts",
+      "line": 232,
+      "code_snippet": "app.post('/tasks', async (req, reply) =>",
+      "description": "All REST API endpoints lack authentication and authorization mechanisms. Any client that can reach the API port can submit tasks, approve gates, reject gates, ingest documents, and view audit logs. This is a critical security gap for a legal AI system.",
+      "risk": "Unauthorized task submissions, malicious gate approvals/rejections, document poisoning, audit log access without authorization, potential for legal document tampering.",
+      "recommendation": "Implement authentication (API key, OAuth2, mTLS, or similar) and role-based authorization. At minimum, protect gate approval/rejection and audit log endpoints.",
+      "remediation": "Add Fastify JWT or custom authentication middleware to verify API keys or bearer tokens on all endpoints, especially POST/approve/reject operations."
+    },
+    {
+      "id": "SEC-009",
+      "severity": "HIGH",
+      "category": "Sensitive Data Exposure",
+      "title": "Audit Log File Created Without Restricted Permissions",
+      "file": "src/audit/index.ts",
+      "line": 110,
+      "code_snippet": "logFile: optional(\"AUDIT_LOG_FILE\", \"./audit.jsonl\")\"",
+      "description": "The audit log is written to a local JSONL file (./audit.jsonl by default) without any file permission restrictions. The file contains all inference calls, tool calls, gates, and debates - potentially including sensitive legal information, user prompts, and decision traces.",
+      "risk": "Unauthorized local access to the audit log could expose sensitive legal information, internal reasoning traces, and potentially allow tampering with audit trails.",
+      "recommendation": "Ensure the audit log file is created with restrictive permissions (0600 on Unix), or store the audit log in a secure database with access controls. Implement log rotation to prevent unbounded growth.",
+      "remediation": "In src/audit/index.ts, set file permissions to 0600 when creating the audit log file, or use a secure backend like a database with authentication."
+    },
+    {
+      "id": "SEC-010",
+      "severity": "HIGH",
+      "category": "CORS / Origin Validation",
+      "title": "No CORS or Origin Validation on REST API",
+      "file": "src/mcp/server.ts",
+      "line": 230,
+      "code_snippet": "const app = Fastify({ logger: false })",
+      "description": "The Fastify REST API has no CORS configuration or origin validation. The API listens on 0.0.0.0 and any origin can make requests to it.",
+      "risk": "Cross-origin requests from malicious websites could trigger task submissions, gate approvals, or document ingestion on behalf of legitimate users.",
+      "recommendation": "Register @fastify/cors plugin with explicit origin whitelist, or implement custom Origin header validation for critical endpoints.",
+      "remediation": "Add: await app.register(cors, { origin: ['https://trusted-domain.com'], credentials: true })"
+    },
+    {
+      "id": "SEC-011",
+      "severity": "MEDIUM",
+      "category": "Secrets Management",
+      "title": "Infisical Error Messages May Expose Configuration Details",
+      "file": "src/secrets/index.ts",
+      "line": 79,
+      "code_snippet": "throw new Error(`Infisical auth failed (${loginRes.status}): ${body.slice(0, 200)}`)",
+      "description": "Error messages from Infisical responses are logged with details that could expose the Infisical setup or error information. Additionally, error output goes to console.warn without proper logging.",
+      "risk": "Sensitive error messages in logs could expose Infisical configuration or error details that aid attackers in reconnaissance.",
+      "recommendation": "Use the logger utility consistently and avoid logging full response bodies. Log only relevant error details and redact sensitive information.",
+      "remediation": "Use logger.warn() instead of console.log/warn, and redact response bodies in error messages."
+    },
+    {
+      "id": "SEC-012",
+      "severity": "MEDIUM",
+      "category": "Information Disclosure",
+      "title": "Tool Error Messages May Expose Implementation Details",
+      "file": "src/tools/pdf.ts",
+      "line": 45,
+      "code_snippet": "reject(new Error(`pdf_tools.py failed (exit ${code}): ${stderr.slice(0, 200)}`))",
+      "description": "The PDF tool rejection message includes stderr output from the Python subprocess. This could expose Python stack traces, file system paths, or other sensitive information about the system configuration.",
+      "risk": "Information disclosure about system configuration, file paths, and Python library versions could aid attackers in reconnaissance.",
+      "recommendation": "Log detailed error information server-side but return generic error messages to clients. Use the auditLogger to record technical details without exposing them in API responses.",
+      "remediation": "Log full stderr to auditLogger, then return generic error to the client."
+    },
+    {
+      "id": "SEC-013",
+      "severity": "MEDIUM",
+      "category": "Insecure Defaults",
+      "title": "REST API Listens on All Network Interfaces by Default",
+      "file": "src/mcp/server.ts",
+      "line": 401,
+      "code_snippet": "await app.listen({ port: Config.api.port, host: '0.0.0.0' })",
+      "description": "The REST API listens on 0.0.0.0 (all interfaces), making it accessible from any network interface. While the README mentions REST API, there is no security warning about exposing sensitive legal data endpoints on the network.",
+      "risk": "If deployed in a networked environment without firewall restrictions, legal AI endpoints could be accessed by unintended parties.",
+      "recommendation": "Default to localhost (127.0.0.1) for local development, or document the requirement to use a reverse proxy with authentication in production. Add a startup warning if listening on 0.0.0.0.",
+      "remediation": "Change line 401 to use localhost by default, or add environment variable API_HOST with default 127.0.0.1"
+    },
+    {
+      "id": "SEC-014",
+      "severity": "LOW",
+      "category": "Denial of Service Prevention",
+      "title": "No Rate Limiting on API Endpoints",
+      "file": "src/mcp/server.ts",
+      "line": 232,
+      "code_snippet": "app.post('/tasks', async (req, reply) =>",
+      "description": "There is no rate limiting on any endpoint. A single client could submit thousands of tasks, perform expensive vector searches, or spam document ingestion.",
+      "risk": "Denial of service through resource exhaustion (token usage, database load, memory consumption).",
+      "recommendation": "Implement rate limiting using @fastify/rate-limit plugin with sensible limits (e.g., 10 requests/minute for /tasks, 100 requests/minute for /documents/search).",
+      "remediation": "Add: await app.register(rateLimit, { max: 10, timeWindow: '1 minute' })"
+    }
+  ],
+  "summary": {
+    "critical_issues": 4,
+    "high_issues": 5,
+    "medium_issues": 3,
+    "low_issues": 2,
+    "immediate_actions_required": [
+      "Add input validation to all REST API endpoints (SEC-005, SEC-006, SEC-007)",
+      "Implement authentication and authorization (SEC-008)",
+      "Sanitize PDF tool inputs to prevent path traversal (SEC-004)",
+      "Fix insecure API key defaults (SEC-001, SEC-002, SEC-003)",
+      "Secure audit log file permissions (SEC-009)"
+    ],
+    "recommended_libraries": [
+      "zod or io-ts for request body/parameter validation",
+      "@fastify/jwt for JWT authentication",
+      "@fastify/cors for CORS management",
+      "@fastify/rate-limit for rate limiting"
+    ]
+  }
+}

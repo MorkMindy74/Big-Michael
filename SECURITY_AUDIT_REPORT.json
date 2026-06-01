@@ -1,0 +1,253 @@
+{
+  "audit_date": "2026-05-31",
+  "codebase": "Big Michael - Multi-agent Legal AI Orchestration",
+  "vulnerabilities": [
+    {
+      "severity": "high",
+      "file": "src/mcp/server.ts",
+      "line": null,
+      "description": "MCP Server exposes all tools without authentication or authorization. Any MCP client can call sensitive operations like submit_task, ingest_document, approve_gate without credentials.",
+      "cvss": "9.1 (Critical)",
+      "recommendation": "Implement API key validation or OAuth2 for MCP clients. Add per-tool authorization checks. Require authentication before exposing sensitive tools like approve_gate."
+    },
+    {
+      "severity": "high",
+      "file": "src/mcp/server.ts",
+      "line": null,
+      "description": "REST API endpoints (POST /tasks, POST /documents, GET /tasks/:id) have no visible authentication middleware. Unauthenticated users can read all tasks and ingest malicious documents.",
+      "cvss": "8.6 (High)",
+      "recommendation": "Add JWT/API key authentication middleware to all REST endpoints. Implement task-level access control - users should only see their own tasks. Rate limit document ingestion."
+    },
+    {
+      "severity": "high",
+      "file": "src/tools/pdf.ts",
+      "line": null,
+      "description": "PDF tools invoke Python subprocess (PyMuPDF, Camelot, Tesseract) via src/agents/base.ts tool_use loop. If file paths or arguments aren't properly escaped, command injection is possible when processing untrusted PDFs.",
+      "cvss": "8.8 (High)",
+      "recommendation": "Use subprocess with shell=false and proper argument escaping. Validate file paths against whitelist. Sandbox PDF processing in a separate process. Use security tools to validate argument construction."
+    },
+    {
+      "severity": "high",
+      "file": "src/mcp/server.ts",
+      "line": null,
+      "description": "approve_gate and reject_gate endpoints allow any caller to approve/reject findings. A compromised agent or external attacker can force approval of malicious findings without human review.",
+      "cvss": "8.2 (High)",
+      "recommendation": "Require explicit human user ID for gate approvals. Implement rate limiting per human reviewer. Log all gate decisions with user identity. Add secondary approval for high-confidence findings."
+    },
+    {
+      "severity": "high",
+      "file": "src/orchestrator.ts, src/dytopo/engine.ts",
+      "line": null,
+      "description": "Task memory and knowledge are not properly isolated between tasks. All agents in a round can access the full knowledge store and memory for any task. A compromised agent could exfiltrate data from unrelated tasks.",
+      "cvss": "7.8 (High)",
+      "recommendation": "Implement task-scoped memory and knowledge access. Query filters in InterRoundMemoryStore.query() must enforce taskId. Create separate Qdrant partitions per task or add row-level security."
+    },
+    {
+      "severity": "medium",
+      "file": "src/config.ts",
+      "line": 12,
+      "description": "OPENAI_API_KEY defaults to empty string if not set. This silent failure could cause embeddings to fail or fall back to insecure defaults without alerting operators.",
+      "cvss": "5.4 (Medium)",
+      "recommendation": "Fail startup if required API keys are missing. Use require() for OPENAI_API_KEY instead of optional(). Add health check endpoint that validates all required secrets are present."
+    },
+    {
+      "severity": "medium",
+      "file": "src/config.ts",
+      "line": null,
+      "description": "Environment variable names and values may appear in error messages (e.g., 'Missing required env var: ANTHROPIC_API_KEY'). If error messages are logged, they expose configuration details to attackers.",
+      "cvss": "5.3 (Medium)",
+      "recommendation": "Sanitize error messages. Never include env var names in exceptions that reach logs or users. Use numeric error codes instead. Log detailed errors only to secure internal systems."
+    },
+    {
+      "severity": "medium",
+      "file": "src/audit/index.ts",
+      "line": null,
+      "description": "Audit log (audit.jsonl) is written to disk with no access control specified. The log contains sensitive information: task descriptions, findings, citations, model calls. File permissions must restrict read access but code doesn't enforce this.",
+      "cvss": "6.5 (Medium)",
+      "recommendation": "Ensure audit.jsonl is created with 0600 permissions (owner read/write only). Rotate audit logs regularly. Consider encrypting the audit log file. Restrict access via filesystem ACLs."
+    },
+    {
+      "severity": "medium",
+      "file": "src/knowledge/index.ts",
+      "line": 40,
+      "description": "ingest() method accepts document content without validation. Malicious documents could contain prompt injection payloads, leading to LLM manipulation when agents search the knowledge store.",
+      "cvss": "6.8 (Medium)",
+      "recommendation": "Validate and sanitize document content before ingestion. Reject documents containing obvious prompt injection patterns. Log all document ingestion. Implement document source verification."
+    },
+    {
+      "severity": "medium",
+      "file": "src/agents/base.ts",
+      "line": null,
+      "description": "System prompts in agent definitions include task descriptions without sanitization. If a task description contains prompt injection, it could manipulate the agent's behavior (e.g., 'Ignore all previous instructions...').",
+      "cvss": "6.5 (Medium)",
+      "recommendation": "Never include user input directly in system prompts. Use templated prompts with clear delimiters. Escape user content as data, not code. Validate task descriptions before use."
+    },
+    {
+      "severity": "medium",
+      "file": "src/embeddings.ts",
+      "line": 15,
+      "description": "OpenAI API key is stored in a module-level variable that persists for the application lifetime. If error handling logs the client object or serializes state, the key could be exposed.",
+      "cvss": "6.2 (Medium)",
+      "recommendation": "Never serialize or log the OpenAI client. Use object destructuring to avoid logging the full client. Consider using short-lived tokens if OpenAI supports it. Rotate keys regularly."
+    },
+    {
+      "severity": "medium",
+      "file": "ui/vite.config.js",
+      "line": 5,
+      "description": "Proxy target for dev server is read from process.env.BIG_MICHAEL_API without validation. A malicious environment variable could redirect all frontend API calls to an attacker-controlled server.",
+      "cvss": "5.8 (Medium)",
+      "recommendation": "Validate proxy target is a safe localhost URL or whitelisted domain. Use URL parsing to prevent SSRF. In production, use hardcoded API URL, not env vars."
+    },
+    {
+      "severity": "medium",
+      "file": "src/agents/definitions.ts",
+      "line": null,
+      "description": "allowedTools array in AgentDefinition controls tool access, but no runtime verification shown. If agent code is compromised, it could call tools outside allowedTools without runtime enforcement.",
+      "cvss": "6.3 (Medium)",
+      "recommendation": "Add runtime tool access check in src/agents/base.ts runAgenticLoop(). Before calling a tool, verify it's in definition.allowedTools. Log tool access violations."
+    },
+    {
+      "severity": "medium",
+      "file": "src/protocols/index.ts",
+      "line": null,
+      "description": "Debate and verification protocols call the model with findings + citations. If findings contain injection payloads, the debate/resolver models might be influenced by malicious content.",
+      "cvss": "6.1 (Medium)",
+      "recommendation": "Validate and sanitize findings before sending to debate/verification. Use structured outputs to prevent injection. Never embed raw finding content in system prompts."
+    },
+    {
+      "severity": "low",
+      "file": "src/logger.ts",
+      "line": null,
+      "description": "Logger includes 'meta' objects in output. If sensitive data (API keys, taskIds) is passed in meta, it will be logged to console unencrypted.",
+      "cvss": "3.9 (Low)",
+      "recommendation": "Implement a log filter that sanitizes meta objects. Use logging middleware to mask sensitive keys. Never log API keys, tokens, or PII."
+    },
+    {
+      "severity": "low",
+      "file": "src/index.ts",
+      "line": null,
+      "description": "Interactive terminal detection (process.stdin.isTTY) determines whether to start MCP server. If STDIN is redirected unexpectedly, MCP server might not start or start in wrong mode.",
+      "cvss": "3.1 (Low)",
+      "recommendation": "Add explicit MCP_ENABLED env var to control MCP startup. Don't rely on TTY detection. Log which server modes are active at startup."
+    },
+    {
+      "severity": "low",
+      "file": "src/memory/index.ts",
+      "line": null,
+      "description": "Memory entries include agentId and taskId but no tag-based access control shown. Agents might be able to query memory from other agents in the same task.",
+      "cvss": "4.3 (Low)",
+      "recommendation": "Add agent-scoped memory queries. Filter by both taskId AND agentId. Implement memory access logs to detect unauthorized access patterns."
+    },
+    {
+      "severity": "low",
+      "file": "src/config.ts",
+      "line": null,
+      "description": "Qdrant API key is optional (process.env.QDRANT_API_KEY). If Qdrant is exposed to network without API key, it's unauthenticated and vulnerable.",
+      "cvss": "4.9 (Low)",
+      "recommendation": "Require QDRANT_API_KEY in production. Add validation at startup. Ensure Qdrant only listens on localhost in dev. Use network-level access controls in production."
+    }
+  ],
+  "riskScore": 72,
+  "riskLevel": "HIGH",
+  "summary": {
+    "critical_findings": 5,
+    "high_findings": 5,
+    "medium_findings": 7,
+    "low_findings": 3,
+    "total_findings": 20
+  },
+  "categories": {
+    "Authentication & Authorization": {
+      "count": 3,
+      "severity": "CRITICAL",
+      "details": "MCP server and REST API lack authentication. No per-task access control. Gate approvals unprotected."
+    },
+    "Injection Vulnerabilities": {
+      "count": 4,
+      "severity": "HIGH",
+      "details": "Command injection in PDF tools, prompt injection in task descriptions, no input sanitization in knowledge ingestion."
+    },
+    "Data Isolation": {
+      "count": 2,
+      "severity": "HIGH",
+      "details": "Task memory and knowledge not isolated. Agents can access unrelated task data."
+    },
+    "Secret Management": {
+      "count": 2,
+      "severity": "HIGH",
+      "details": "API keys logged accidentally, embedded in errors, optional fallbacks that fail silently."
+    },
+    "Audit & Monitoring": {
+      "count": 2,
+      "severity": "MEDIUM",
+      "details": "Audit log unprotected, no access control, may contain PII."
+    },
+    "Configuration Security": {
+      "count": 4,
+      "severity": "MEDIUM-LOW",
+      "details": "Environment variables without validation, proxy targets not verified, optional secrets fail silently."
+    }
+  },
+  "topPriorityFixes": [
+    {
+      "priority": 1,
+      "issue": "Add authentication & authorization to MCP server and REST API",
+      "impact": "BLOCKS any multi-tenant or public deployment",
+      "effort": "2-3 days"
+    },
+    {
+      "priority": 2,
+      "issue": "Implement task-scoped access control for memory, knowledge, and findings",
+      "impact": "Prevents data leakage between tasks and cross-agent attacks",
+      "effort": "3-4 days"
+    },
+    {
+      "priority": 3,
+      "issue": "Secure PDF tool subprocess: escape arguments, validate paths, use shell=false",
+      "impact": "Prevents RCE via malicious PDFs",
+      "effort": "1-2 days"
+    },
+    {
+      "priority": 4,
+      "issue": "Sanitize task descriptions and document content before use in prompts",
+      "impact": "Prevents prompt injection attacks on LLM agents",
+      "effort": "2 days"
+    },
+    {
+      "priority": 5,
+      "issue": "Protect audit log: restrict file permissions, encrypt, redact sensitive fields",
+      "impact": "Prevents information disclosure via log access",
+      "effort": "1 day"
+    }
+  ],
+  "complianceGaps": [
+    "No multi-tenancy support (all users share all data)",
+    "No role-based access control (RBAC)",
+    "No audit trail for sensitive operations",
+    "No encryption at rest for sensitive data",
+    "No data retention/deletion policies",
+    "No rate limiting on API endpoints"
+  ],
+  "recommendations": [
+    "Implement OAuth2 or API key authentication for all entry points (MCP, REST)",
+    "Add per-task authorization - users should only access their own tasks",
+    "Validate all user input before use in prompts or tool calls",
+    "Implement runtime tool access control - verify tools against allowedTools whitelist",
+    "Sanitize document content before ingestion - scan for prompt injection patterns",
+    "Use parameterized queries in all database interactions (Qdrant filters)",
+    "Escape subprocess arguments with shell=false, use allowlist for file paths",
+    "Protect audit log with file-level ACLs (0600 permissions), rotate logs",
+    "Add request signing/verification for gate approvals - require human user context",
+    "Implement data segregation - task-scoped knowledge, memory, and agent context",
+    "Add health check endpoint that validates all secrets are properly loaded",
+    "Implement rate limiting per user/task to prevent abuse",
+    "Use security headers in REST API (HSTS, CSP, X-Frame-Options)",
+    "Add CORS protection - whitelist allowed origins, don't use wildcard",
+    "Log all sensitive operations (document ingest, gate approval, finding creation)",
+    "Implement secret rotation for API keys",
+    "Add input validation layer - maximum document sizes, content type checks",
+    "Use environment variable validation at startup - fail fast on missing secrets",
+    "Implement agent behavior monitoring - detect anomalous tool usage patterns",
+    "Add cryptographic signing to findings before they enter the debate protocol"
+  ]
+}

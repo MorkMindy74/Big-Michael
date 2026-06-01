@@ -1,0 +1,200 @@
+{
+  "vulnerabilities": [
+    {
+      "id": "AUTH-001",
+      "severity": "critical",
+      "category": "authentication",
+      "file": "src/mcp/server.ts",
+      "line": 0,
+      "description": "REST API endpoints have no authentication. Any client can submit tasks, approve/reject gates, ingest documents, and query sensitive data.",
+      "cwe": "CWE-306: Missing Authentication for Critical Function",
+      "impact": "Unauthenticated attacker can submit arbitrary legal tasks, approve malicious findings, ingest manipulated documents, and access all stored information.",
+      "recommendation": "Implement API key authentication, OAuth2, or JWT tokens on all REST endpoints. Require per-operation authorization checks. Use middleware like Fastify's @fastify/jwt or custom auth handler."
+    },
+    {
+      "id": "INJ-001",
+      "severity": "high",
+      "category": "input-validation",
+      "file": "src/agents/base.ts",
+      "line": 0,
+      "description": "Task descriptions and round goals are directly interpolated into model prompts without sanitization. Attackers can inject instructions via task descriptions.",
+      "cwe": "CWE-94: Improper Control of Generation of Code",
+      "impact": "Prompt injection attacks can manipulate agent behavior, exfiltrate documents from knowledge store, approve malicious findings, or generate false legal opinions.",
+      "recommendation": "Sanitize or escape task descriptions and round goals before interpolating into prompts. Use separate system/user roles strictly. Consider using prompt-level schema validation (Claude's structured outputs feature)."
+    },
+    {
+      "id": "INJ-002",
+      "severity": "high",
+      "category": "input-validation",
+      "file": "src/protocols/index.ts",
+      "line": 0,
+      "description": "Finding content is directly used in debate protocol prompts without sanitization. Malicious findings can inject instructions into the resolver model.",
+      "cwe": "CWE-94: Improper Control of Generation of Code",
+      "impact": "An earlier agent (or ingested document) can craft findings that manipulate the debate/verification process, overturning correct findings or upholding incorrect ones.",
+      "recommendation": "Quote or escape finding content before passing to debate models. Use structured outputs for debate results. Validate finding format and content constraints before processing."
+    },
+    {
+      "id": "INJ-003",
+      "severity": "high",
+      "category": "input-validation",
+      "file": "src/knowledge/index.ts",
+      "line": 0,
+      "description": "Document content from ingested PDFs is chunked and directly embedded in search results. No validation of content before use in agent prompts.",
+      "cwe": "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code",
+      "impact": "A malicious PDF ingested into the knowledge store can contain prompt injection payloads that will be fed to agents in subsequent rounds, compromising all downstream analysis.",
+      "recommendation": "Validate and sanitize document content on ingestion. Consider scanning for prompt injection patterns. Use document attestation/signature verification. Apply content security policies to documents."
+    },
+    {
+      "id": "INJ-004",
+      "severity": "medium",
+      "category": "input-validation",
+      "file": "src/orchestrator.ts",
+      "line": 0,
+      "description": "parseJsonObject() uses regex to extract and parse JSON without schema validation. Could accept malformed or injection-laden JSON.",
+      "cwe": "CWE-91: XML Injection (or JSON injection by analogy)",
+      "impact": "Malformed JSON in model responses could bypass intended output structure, allowing agents to escape their constraints.",
+      "recommendation": "Use strict JSON schema validation with libraries like zod or ajv. Validate parsed JSON against expected schema before using. Return errors if validation fails."
+    },
+    {
+      "id": "PATH-001",
+      "severity": "high",
+      "category": "input-validation",
+      "file": "src/orchestrator.ts",
+      "line": 0,
+      "description": "Template loading from src/templates/ directory uses extname and readFile without path validation. If templates can be user-controlled, path traversal is possible.",
+      "cwe": "CWE-22: Improper Limitation of a Pathname to a Restricted Directory",
+      "impact": "An attacker could load arbitrary files from the filesystem (e.g., /etc/passwd, .env files) if template paths are user-controlled.",
+      "recommendation": "Whitelist allowed template IDs. Use path.resolve() and path.normalize() to ensure paths stay within src/templates/. Never accept user-supplied file paths directly."
+    },
+    {
+      "id": "SSRF-001",
+      "severity": "medium",
+      "category": "input-validation",
+      "file": "src/embeddings.ts",
+      "line": 0,
+      "description": "Ollama embedding endpoint is hardcoded but Config.local.ollamaUrl is user-configurable. Could be redirected to internal services via env var injection.",
+      "cwe": "CWE-918: Server-Side Request Forgery (SSRF)",
+      "impact": "If OLLAMA_URL is controlled by attacker, they can redirect embedding calls to internal APIs, Metadata services (AWS/GCP), or internal tools.",
+      "recommendation": "Validate OLLAMA_URL against a whitelist of allowed hosts. Use DNS validation. Disable SSRF-prone protocols (gopher, file://, etc.) with a URL parser. Consider network isolation."
+    },
+    {
+      "id": "LOG-001",
+      "severity": "medium",
+      "category": "data-exposure",
+      "file": "src/audit/index.ts",
+      "line": 0,
+      "description": "Audit log (audit.jsonl) is append-only and grows unbounded. No size limits, rotation, or cleanup policy visible. Full task descriptions and findings are logged.",
+      "cwe": "CWE-400: Uncontrolled Resource Consumption",
+      "impact": "Disk exhaustion attack: submit large tasks to fill disk. Sensitive legal information accumulates in unencrypted log file indefinitely.",
+      "recommendation": "Implement log rotation (daily, size-based). Set max file size limits. Encrypt sensitive fields in audit log. Implement retention policy (e.g., purge after 90 days). Consider write-once append-only semantics with encryption."
+    },
+    {
+      "id": "LOG-002",
+      "severity": "medium",
+      "category": "data-exposure",
+      "file": "src/audit/index.ts",
+      "line": 0,
+      "description": "Audit events are emitted on EventEmitter and SSE-streamed to any connected client without authentication. Real-time legal work details are exposed.",
+      "cwe": "CWE-200: Exposure of Sensitive Information to an Unauthorized Actor",
+      "impact": "Unauthenticated attacker can subscribe to /audit/stream SSE endpoint and monitor all legal tasks in real-time, learning about client matters.",
+      "recommendation": "Require authentication on SSE endpoints. Filter audit stream per-user (only show their tasks). Redact sensitive fields (document content, findings) from real-time stream. Use WebSocket auth."
+    },
+    {
+      "id": "CONFIG-001",
+      "severity": "low",
+      "category": "secrets",
+      "file": "src/config.ts",
+      "line": 0,
+      "description": "Config object is exported and accessible throughout the codebase. Embedding API key (OpenAI_API_KEY) is accessible if local embeddings disabled.",
+      "cwe": "CWE-798: Use of Hard-Coded Credentials",
+      "impact": "If Config object is logged, serialized, or exposed in error messages, API keys could leak. Config also exposed to all agents via context.",
+      "recommendation": "Never export full Config object. Create a filtered Config getter that redacts secrets. Use a SecureConfig wrapper. Pass only required (non-secret) settings to agents."
+    },
+    {
+      "id": "AUTHZ-001",
+      "severity": "high",
+      "category": "authentication",
+      "file": "src/orchestrator.ts",
+      "line": 0,
+      "description": "approve_gate and reject_gate operations have no user/role checking. Any authenticated user (if auth is added) can approve/reject any gate, including for other users' tasks.",
+      "cwe": "CWE-639: Authorization Bypass Through User-Controlled Key",
+      "impact": "A reviewer can approve malicious findings for other users' cases, or reject legitimate findings, compromising legal work integrity.",
+      "recommendation": "Implement fine-grained authorization: only task owner or assigned reviewers can approve gates. Audit all gate approvals with reviewer identity. Use role-based access control (RBAC)."
+    },
+    {
+      "id": "RATE-001",
+      "severity": "medium",
+      "category": "input-validation",
+      "file": "src/mcp/server.ts",
+      "line": 0,
+      "description": "No rate limiting on REST API endpoints. An attacker can DoS the service by submitting unlimited tasks or ingesting huge documents.",
+      "cwe": "CWE-770: Allocation of Resources Without Limits or Throttling",
+      "impact": "Attacker floods service with tasks, consuming LLM API quota, Qdrant vector DB space, and disk (audit logs), causing denial of service.",
+      "recommendation": "Implement rate limiting per IP and per user (once auth added). Use Fastify's @fastify/rate-limit. Limit task size, document size, API call frequency. Implement request queuing."
+    },
+    {
+      "id": "UPLOAD-001",
+      "severity": "high",
+      "category": "input-validation",
+      "file": "src/mcp/server.ts",
+      "line": 0,
+      "description": "ingest_document tool accepts arbitrary content size with no validation. Massive documents can be ingested, causing memory/storage exhaustion or slow down Qdrant.",
+      "cwe": "CWE-400: Uncontrolled Resource Consumption",
+      "impact": "Attacker uploads gigabyte PDF, causing out-of-memory errors in PDF processing, Qdrant overload, or service crash.",
+      "recommendation": "Enforce max document size (e.g., 100MB). Validate file type on upload. Implement async document processing with progress tracking. Use chunking with bounded chunk size."
+    },
+    {
+      "id": "CORS-001",
+      "severity": "low",
+      "category": "input-validation",
+      "file": "ui/vite.config.js",
+      "line": 0,
+      "description": "Vite proxy proxies all backend routes to localhost:3101 with changeOrigin: true. No CORS headers or origin validation visible.",
+      "cwe": "CWE-942: Permissive Cross-domain Policy with Untrusted Domains",
+      "impact": "If the UI is served from different origin, CORS may be misconfigured, allowing cross-origin document access.",
+      "recommendation": "Explicitly configure CORS with whitelist of allowed origins. Do not use changeOrigin without validation. Set proper CORS headers in Fastify backend. Use @fastify/cors."
+    },
+    {
+      "id": "SECRETS-001",
+      "severity": "medium",
+      "category": "secrets",
+      "file": "src/index.ts",
+      "line": 0,
+      "description": "Infisical bootstrap vars (INFISICAL_CLIENT_SECRET) must be in .env file. If .env is accidentally committed, master credentials are leaked.",
+      "cwe": "CWE-798: Use of Hard-Coded Credentials",
+      "impact": "If .env is committed to git, attacker gains access to all Infisical secrets (API keys, passwords, etc.).",
+      "recommendation": ".env must be in .gitignore. Use .env.example with placeholders only. Consider pre-commit hooks to prevent .env commits. Use environment-specific secret injection in CI/CD."
+    },
+    {
+      "id": "TOOLS-001",
+      "severity": "high",
+      "category": "authentication",
+      "file": "src/agents/base.ts",
+      "line": 0,
+      "description": "Agents have allowedTools list but tool invocation has no runtime permission checks. An agent could attempt to call tools not in its allowedTools array.",
+      "cwe": "CWE-639: Authorization Bypass Through User-Controlled Key",
+      "impact": "A compromised agent prompt could trick the agent into calling unauthorized tools (e.g., drafting agent calling signature tools), or exfiltrating documents.",
+      "recommendation": "Implement strict tool authorization at tool invocation time. Check tool name against allowedTools before execution. Reject unknown tools. Log all tool calls with agent identity."
+    }
+  ],
+  "riskScore": 72,
+  "summary": "Big Michael has critical authentication gaps (no API auth), high prompt injection risks (task/finding content in prompts), and uncontrolled resource consumption vulnerabilities. Legal task data is exposed to unauthenticated access and real-time monitoring. Immediate remediation required before production use.",
+  "topThreats": [
+    "Unauthenticated REST API enables task submission, data exfiltration, and gate manipulation",
+    "Prompt injection via task descriptions and ingested documents can compromise legal analysis and findings",
+    "No authorization on sensitive operations (gate approval) allows unauthorized decisions on legal matters"
+  ],
+  "recommendations": [
+    "CRITICAL: Implement mandatory authentication (OAuth2/JWT) on all REST endpoints and MCP server before production.",
+    "CRITICAL: Add input sanitization for task descriptions, findings, and document content used in model prompts. Use Claude's structured outputs to constrain agent outputs.",
+    "CRITICAL: Implement fine-grained authorization per task, with audit trail of who approved/rejected gates.",
+    "HIGH: Add rate limiting and request size limits to prevent DoS via task/document flooding.",
+    "HIGH: Validate and whitelist template paths; use path normalization to prevent directory traversal.",
+    "HIGH: Encrypt sensitive fields in audit log; implement log rotation and retention policies.",
+    "HIGH: Require authentication on all SSE streaming endpoints; filter streams per-user.",
+    "MEDIUM: Validate Ollama/embedding URLs against whitelist to prevent SSRF attacks.",
+    "MEDIUM: Implement tool authorization checks at invocation time; never call tools outside allowedTools.",
+    "MEDIUM: Add CORS configuration with origin whitelist; remove permissive changeOrigin settings.",
+    "LOW: Redact secrets from Config exports; use SecureConfig wrapper for agent context."
+  ]
+}

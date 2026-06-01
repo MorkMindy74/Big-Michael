@@ -1,9 +1,9 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Discover Legal
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//     http://www.apache.org/licenses/LICENSE-2.0
+// This program is free software: you can redistribute it and/or modify it
+// under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version. See <https://www.gnu.org/licenses/>.
 
 import { QdrantClient } from "@qdrant/js-client-rest";
 import { v4 as uuidv4 } from "uuid";
@@ -135,6 +135,39 @@ export class KnowledgeStore {
     );
 
     return sorted.map((p) => (p.payload as Record<string, unknown>).content as string).join("\n");
+  }
+
+  /** List every ingested document (one entry per docId), for pickers/browsing. */
+  async listDocuments(): Promise<Array<{
+    id: string;
+    title: string;
+    jurisdiction?: string;
+    documentType?: string;
+  }>> {
+    this.assertReady();
+    const seen = new Map<string, { id: string; title: string; jurisdiction?: string; documentType?: string }>();
+    let offset: string | number | undefined | null = undefined;
+    do {
+      const res = await this.qdrant.scroll(COLLECTION, {
+        limit: 256,
+        with_payload: true,
+        offset: offset ?? undefined,
+      });
+      for (const pt of res.points) {
+        const p = pt.payload as Record<string, unknown>;
+        const id = p?.docId as string | undefined;
+        if (id && !seen.has(id)) {
+          seen.set(id, {
+            id,
+            title: (p.title as string) ?? "Untitled",
+            jurisdiction: (p.jurisdiction as string) ?? undefined,
+            documentType: (p.documentType as string) ?? undefined,
+          });
+        }
+      }
+      offset = res.next_page_offset as string | number | null | undefined;
+    } while (offset != null);
+    return [...seen.values()];
   }
 
   private assertReady(): void {

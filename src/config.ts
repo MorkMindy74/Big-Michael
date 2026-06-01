@@ -1,9 +1,9 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Discover Legal
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//     http://www.apache.org/licenses/LICENSE-2.0
+// This program is free software: you can redistribute it and/or modify it
+// under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version. See <https://www.gnu.org/licenses/>.
 
 import "dotenv/config";
 
@@ -47,6 +47,12 @@ export const Config = {
 
   api: {
     port: parseInt(optional("API_PORT", "3101")),
+  },
+
+  // Per-agent agentic loop — how many tool_use iterations an agent may run
+  // before it must return a final answer.
+  agents: {
+    maxToolIterations: parseInt(optional("AGENT_MAX_TOOL_ITERATIONS", "6")),
   },
 
   dytopo: {

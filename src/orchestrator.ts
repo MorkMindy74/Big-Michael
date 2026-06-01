@@ -1,9 +1,9 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Discover Legal
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//     http://www.apache.org/licenses/LICENSE-2.0
+// This program is free software: you can redistribute it and/or modify it
+// under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version. See <https://www.gnu.org/licenses/>.
 
 /**
  * Top-level orchestrator — ties the full system together.
@@ -46,6 +46,7 @@ import type {
   WorkflowType,
   TaskPhase,
   RoundGoal,
+  TaskTable,
 } from "./types.js";
 
 const PHASE_SEQUENCES: Record<WorkflowType, TaskPhase[]> = {
@@ -56,6 +57,22 @@ const PHASE_SEQUENCES: Record<WorkflowType, TaskPhase[]> = {
   tabulate:    ["intake", "analysis", "delivery"],
   full_bench:  ["intake", "research", "analysis", "drafting", "review", "verification", "delivery"],
 };
+
+/**
+ * Best-effort extraction of a single JSON object from an LLM response.
+ * Strips markdown fences and isolates the outermost {...} before parsing.
+ */
+function parseJsonObject(text: string): unknown | undefined {
+  const stripped = text.replace(/```(?:json)?/gi, "").trim();
+  const start = stripped.indexOf("{");
+  const end = stripped.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) return undefined;
+  try {
+    return JSON.parse(stripped.slice(start, end + 1));
+  } catch {
+    return undefined;
+  }
+}
 
 export class Orchestrator {
   readonly registry: AgentRegistry;
@@ -314,6 +331,19 @@ export class Orchestrator {
 
     // Final synthesis by root orchestrator
     task.output = await this.synthesise(task);
+
+    // For tabulate workflows, also produce a structured spreadsheet-style table.
+    if (task.workflowType === "tabulate") {
+      try {
+        task.table = await this.tabulate(task);
+      } catch (err) {
+        logger.warn("Tabulation failed; falling back to text output only", {
+          taskId: task.id,
+          error: (err as Error).message,
+        });
+      }
+    }
+
     task.status = "complete";
     task.completedAt = new Date();
     task.updatedAt = new Date();
@@ -441,6 +471,129 @@ Every claim must trace to a specific finding number from the list above.`;
 
     const textBlock = response.content.find((b) => b.type === "text");
     return textBlock?.type === "text" ? textBlock.text : "";
+  }
+
+  /**
+   * Extract the task's findings into a structured table for spreadsheet-style
+   * review. The root orchestrator chooses appropriate columns for the subject
+   * matter and maps each row back to a source finding via `_findingId`.
+   */
+  private async tabulate(task: Task): Promise<TaskTable | undefined> {
+    const findings = task.findings.filter(
+      (f) => !task.pendingGates.some((g) => g.findingId === f.id && g.status === "rejected"),
+    );
+    if (findings.length === 0) return undefined;
+
+    const findingsSummary = findings
+      .map((f) => `id=${f.id} | ${f.agentName} (R${f.round}, conf ${f.confidence.toFixed(2)}): ${f.content}`)
+      .join("\n\n");
+
+    const prompt = `TASK: ${task.description}
+
+FINDINGS:
+${findingsSummary}
+
+Extract these findings into a structured table suitable for a spreadsheet review grid.
+If the TASK above names the columns it wants, use exactly those column names and order.
+Otherwise choose 3–6 columns that best capture the structured content for THIS subject matter.
+
+Respond with ONLY valid JSON (no prose, no markdown fences) in exactly this shape:
+{
+  "columns": ["Column A", "Column B"],
+  "rows": [
+    { "Column A": "value", "Column B": "value", "_findingIds": ["<source finding id>", "..."] }
+  ]
+}
+
+Rules:
+- MERGE findings that make the same substantive point into a SINGLE row.
+- Keep findings that make genuinely DIFFERENT points as SEPARATE rows, even when they concern the same clause or topic.
+- "_findingIds" MUST list the bare id(s) of every finding that contributes to that row (no "id=" prefix or brackets).
+- Do NOT add columns for source ids or confidence — those are attached automatically.
+- Do NOT use column names beginning with an underscore.
+- Every column listed in "columns" must appear as a key in every row.
+- Keep cell values concise (a phrase or sentence, not paragraphs).`;
+
+    const model = selectModel({ tier: 0, taskType: "synthesis" });
+    const provider = getProvider(model);
+    const response = await provider.chat({
+      model: resolveModelId(model),
+      maxTokens: 4000,
+      system: ROOT_ORCHESTRATOR.systemPrompt,
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const textBlock = response.content.find((b) => b.type === "text");
+    const text = textBlock?.type === "text" ? textBlock.text : "";
+
+    const parsed = parseJsonObject(text) as
+      | { columns?: unknown; rows?: unknown }
+      | undefined;
+    if (!parsed || !Array.isArray(parsed.columns) || !Array.isArray(parsed.rows)) {
+      logger.warn("Tabulation produced unparseable output", { taskId: task.id });
+      return undefined;
+    }
+
+    const confByFinding = new Map(findings.map((f) => [f.id, f.confidence]));
+    const validIds = new Set(findings.map((f) => f.id));
+    // Display columns never include underscore-prefixed internal keys.
+    const columns = parsed.columns.map((c) => String(c)).filter((c) => !c.startsWith("_"));
+
+    const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+    // Collect every known finding id referenced anywhere in the row (the model
+    // may use `_findingIds`, `_findingId`, or embed ids inside a stray value).
+    const contributorsOf = (r: Record<string, unknown>): string[] => {
+      const found = new Set<string>();
+      const pool: string[] = [];
+      const raw = (r._findingIds ?? r._findingId) as unknown;
+      if (Array.isArray(raw)) pool.push(...raw.map(String));
+      else if (raw != null) pool.push(String(raw));
+      for (const v of Object.values(r)) pool.push(String(v ?? ""));
+      for (const s of pool) for (const m of s.matchAll(UUID)) if (validIds.has(m[0])) found.add(m[0]);
+      return [...found];
+    };
+
+    const byConfDesc = (a: string, b: string) => (confByFinding.get(b) ?? 0) - (confByFinding.get(a) ?? 0);
+
+    const rawRows = (parsed.rows as Array<Record<string, unknown>>)
+      .filter((r) => r && typeof r === "object")
+      .map((r) => {
+        const row: Record<string, string> = {};
+        for (const col of columns) row[col] = r[col] != null ? String(r[col]) : "";
+        const contributors = contributorsOf(r).sort(byConfDesc);
+        const confs = contributors.map((id) => confByFinding.get(id)).filter((c): c is number => c != null);
+        row._findingIds = contributors.join(",");
+        row._findingId = contributors[0] ?? "";
+        row._confidence = confs.length ? Math.max(...confs).toFixed(2) : "";
+        row._sources = String(contributors.length);
+        return row;
+      });
+
+    // Safety net: collapse rows whose visible cells are identical (the model
+    // missed a merge). Genuinely distinct points differ in their cells and are
+    // preserved — each keeps its own confidence.
+    const merged = new Map<string, Record<string, string>>();
+    for (const row of rawRows) {
+      const key = columns.map((c) => (row[c] ?? "").trim().toLowerCase()).join("");
+      const existing = merged.get(key);
+      if (!existing) { merged.set(key, { ...row }); continue; }
+      const ids = [...new Set([
+        ...existing._findingIds.split(",").filter(Boolean),
+        ...row._findingIds.split(",").filter(Boolean),
+      ])].sort(byConfDesc);
+      existing._findingIds = ids.join(",");
+      existing._findingId = ids[0] ?? existing._findingId;
+      existing._sources = String(ids.length);
+      const maxConf = Math.max(parseFloat(existing._confidence || "0"), parseFloat(row._confidence || "0"));
+      existing._confidence = maxConf ? maxConf.toFixed(2) : "";
+    }
+
+    const rows = [...merged.values()].sort(
+      (a, b) => parseFloat(b._confidence || "0") - parseFloat(a._confidence || "0"),
+    );
+    const sourceFindingIds = [...new Set(rows.flatMap((r) => r._findingIds.split(",").filter(Boolean)))];
+
+    return { columns, rows, sourceFindingIds, generatedAt: new Date() };
   }
 
   private async buildSourceTextMap(docIds: string[]): Promise<Map<string, string>> {

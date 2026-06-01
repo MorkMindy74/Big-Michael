@@ -482,7 +482,8 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     reply.raw.flushHeaders();
 
     const send = (type: string, data: unknown) => {
-      reply.raw.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+      const safeType = type.replace(/[\r\n]/g, " ");
+      reply.raw.write(`event: ${safeType}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
     // Send current snapshot immediately

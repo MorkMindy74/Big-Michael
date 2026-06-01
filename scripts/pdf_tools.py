@@ -133,7 +133,7 @@ def generate(args: dict) -> dict:
         body_html = _sections_to_html(content)
 
     conf_banner = '<p class="confidential">CONFIDENTIAL — LEGALLY PRIVILEGED</p>' if confidential else ""
-    meta_line = f'<div class="header-meta">Author: {author}</div>' if author else ""
+    meta_line = f'<div class="header-meta">Author: {_esc(author)}</div>' if author else ""
 
     html = f"""<!DOCTYPE html>
 <html><head><style>{_CSS}</style></head>

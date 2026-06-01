@@ -144,6 +144,7 @@ export class Orchestrator {
   // ─── Task management ──────────────────────────────────────────────────────
 
   private static readonly MAX_CONCURRENT_TASKS = 10;
+  private static readonly MAX_DESCRIPTION_CHARS = 20_000;
 
   async submitTask(params: {
     description: string;
@@ -152,6 +153,12 @@ export class Orchestrator {
     clientNumber?: string;
     matterNumber?: string;
   }): Promise<Task> {
+    if (params.description.length > Orchestrator.MAX_DESCRIPTION_CHARS) {
+      throw new Error(
+        `Task description exceeds the ${Orchestrator.MAX_DESCRIPTION_CHARS.toLocaleString()} character limit ` +
+        `(${params.description.length.toLocaleString()} received). Please shorten the description.`,
+      );
+    }
     const running = Array.from(this.tasks.values()).filter((t) => t.status === "running").length;
     if (running >= Orchestrator.MAX_CONCURRENT_TASKS) {
       throw new Error(`Server at capacity: ${running} tasks already running. Please wait for one to complete.`);

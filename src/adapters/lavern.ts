@@ -242,7 +242,8 @@ export function sanitizePromptContent(s: string): string {
   return s
     .replace(/\bFINDING:/gi, "[FINDING:]")
     .replace(/\bEND_FINDING\b/gi, "[END_FINDING]")
-    .replace(/\bNO_FINDINGS\b/gi, "[NO_FINDINGS]");
+    .replace(/\bNO_FINDINGS\b/gi, "[NO_FINDINGS]")
+    .replace(/\bNO_CHALLENGE\b/gi, "[NO_CHALLENGE]");
 }
 
 // ─── Generic external agent format ───────────────────────────────────────────

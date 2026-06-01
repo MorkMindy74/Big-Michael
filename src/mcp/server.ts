@@ -25,6 +25,11 @@ import Fastify from "fastify";
 import type { FastifyRequest } from "fastify";
 import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
+import multipart from "@fastify/multipart";
+import { mkdir, writeFile, unlink } from "fs/promises";
+import { join, extname, basename } from "path";
+import { randomUUID } from "crypto";
+import { extractTextFromPdf } from "../tools/pdf.js";
 import { Config } from "../config.js";
 import { logger } from "../logger.js";
 import { auditLogger } from "../audit/index.js";
@@ -243,6 +248,7 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
   // credentials:true so session cookies ride along once OAuth is live.
   await app.register(cors, { origin: Config.auth.allowedOrigins, credentials: true });
   await app.register(cookie, { secret: Config.auth.sessionSecret });
+  await app.register(multipart, { limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
   registerAuthRoutes(app, orchestrator);
 
   // Resolve the principal for a request. Auth OFF (local) → the LOCAL_PARTNER
@@ -321,7 +327,7 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
   app.get("/tasks/:id/table.csv", async (req, reply) => {
     const { id } = req.params as { id: string };
     const task = orchestrator.getTask(id);
-    if (!task) return reply.status(404).send({ error: "Task not found" });
+    if (!task || !canViewTask(getUser(req), task)) return reply.status(404).send({ error: "Task not found" });
     if (!task.table) return reply.status(404).send({ error: "No table available for this task" });
 
     const esc = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
@@ -342,6 +348,8 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
 
   app.post("/tasks/:taskId/gates/:gateId/approve", async (req, reply) => {
     const { taskId, gateId } = req.params as { taskId: string; gateId: string };
+    const task = orchestrator.getTask(taskId);
+    if (!task || !canViewTask(getUser(req), task)) return reply.status(404).send({ error: "Task not found" });
     const { note } = (req.body ?? {}) as { note?: string };
     orchestrator.approveGate(taskId, gateId, note);
     return reply.status(200).send({ ok: true });
@@ -349,6 +357,8 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
 
   app.post("/tasks/:taskId/gates/:gateId/reject", async (req, reply) => {
     const { taskId, gateId } = req.params as { taskId: string; gateId: string };
+    const task = orchestrator.getTask(taskId);
+    if (!task || !canViewTask(getUser(req), task)) return reply.status(404).send({ error: "Task not found" });
     const { reason } = (req.body ?? {}) as { reason: string };
     orchestrator.rejectGate(taskId, gateId, reason);
     return reply.status(200).send({ ok: true });
@@ -356,11 +366,48 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
 
   app.post("/documents", async (req, reply) => {
     const body = req.body as { title: string; content: string; source?: string; jurisdiction?: string; documentType?: string };
-    const docId = await orchestrator.knowledge.ingest(body);
+    const docId = await orchestrator.knowledge.ingest({ ...body, ownerId: getUser(req)?.profileId });
     return reply.status(201).send({ id: docId });
   });
 
-  app.get("/documents", async () => orchestrator.knowledge.listDocuments());
+  // Upload an actual file (PDF or text), extract its text, and ingest it.
+  app.post("/documents/upload", async (req, reply) => {
+    const data = await (req as unknown as { file: () => Promise<{ filename: string; mimetype: string; toBuffer: () => Promise<Buffer> } | undefined> }).file();
+    if (!data) return reply.status(400).send({ error: "No file uploaded" });
+    const filename = data.filename || "document";
+    const ext = extname(filename).toLowerCase();
+    const buf = await data.toBuffer();
+    const TEXT_EXT = [".txt", ".md", ".markdown", ".csv", ".json", ".log", ".text", ".rtf"];
+
+    let content = "";
+    try {
+      if (ext === ".pdf") {
+        const dir = join(Config.pdf.outputDir, "uploads");
+        await mkdir(dir, { recursive: true });
+        const tmp = join(dir, `${randomUUID()}.pdf`);
+        await writeFile(tmp, buf);
+        try { content = await extractTextFromPdf(tmp); } finally { await unlink(tmp).catch(() => {}); }
+      } else if (TEXT_EXT.includes(ext) || (data.mimetype || "").startsWith("text/")) {
+        content = buf.toString("utf8");
+      } else {
+        return reply.status(415).send({ error: `Unsupported file type '${ext || data.mimetype}'. Upload a PDF or text file (or paste the text in the Library).` });
+      }
+    } catch (err) {
+      return reply.status(422).send({ error: `Could not read ${filename}: ${(err as Error).message}` });
+    }
+    if (!content.trim()) {
+      return reply.status(422).send({ error: `No extractable text found in ${filename} (a scanned image PDF needs OCR, which isn't wired to upload yet).` });
+    }
+
+    const title = basename(filename, ext);
+    const id = await orchestrator.knowledge.ingest({ title, content, documentType: ext.replace(".", "") || undefined, source: "upload", ownerId: getUser(req)?.profileId });
+    return reply.status(201).send({ id, title });
+  });
+
+  // A lawyer sees only documents they uploaded; partners see the whole library.
+  const docOwnerScope = (req: FastifyRequest) => (isPartner(getUser(req)) ? undefined : getUser(req)?.profileId);
+
+  app.get("/documents", async (req) => orchestrator.knowledge.listDocuments(docOwnerScope(req)));
 
   app.get("/documents/search", async (req) => {
     const { query, topK, jurisdiction, documentType } = req.query as Record<string, string>;
@@ -368,6 +415,7 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
       topK: topK ? parseInt(topK) : undefined,
       jurisdiction,
       documentType,
+      ownerId: docOwnerScope(req),
     });
   });
 
@@ -386,7 +434,7 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
   app.get("/tasks/:id/stream", async (req, reply) => {
     const { id } = req.params as { id: string };
     const task = orchestrator.getTask(id);
-    if (!task) return reply.status(404).send({ error: "Task not found" });
+    if (!task || !canViewTask(getUser(req), task)) return reply.status(404).send({ error: "Task not found" });
 
     reply.raw.setHeader("Content-Type", "text/event-stream");
     reply.raw.setHeader("Cache-Control", "no-cache");
@@ -475,14 +523,16 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     };
     const task = await orchestrator.submitFromTemplate(body.templateId, body.substitutions, body.documentIds,
       { clientNumber: body.clientNumber, matterNumber: body.matterNumber });
-    return reply.status(201).send(task);
+    const user = getUser(req);
+    if (user) orchestrator.assignLawyers(task.id, [user.profileId]);
+    return reply.status(201).send(orchestrator.getTask(task.id) ?? task);
   });
 
   // T19: get_round REST route
   app.get("/tasks/:taskId/rounds/:round", async (req, reply) => {
     const { taskId, round } = req.params as { taskId: string; round: string };
     const task = orchestrator.getTask(taskId);
-    if (!task) return reply.status(404).send({ error: "Task not found" });
+    if (!task || !canViewTask(getUser(req), task)) return reply.status(404).send({ error: "Task not found" });
     const roundState = task.rounds[parseInt(round) - 1];
     if (!roundState) return reply.status(404).send({ error: "Round not found" });
     return roundState;
@@ -504,28 +554,40 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     };
   });
 
+  // The audit log spans every matter, so it is filtered to the matters the
+  // principal may see. Partners see all (incl. system events with no taskId);
+  // a lawyer sees only audit entries for their own matters.
+  const auditVisible = (req: FastifyRequest) => {
+    const user = getUser(req);
+    if (isPartner(user)) return () => true;
+    const ids = new Set(filterVisible(user, orchestrator.listTasks()).map((t) => t.id));
+    return (e: { taskId?: string }) => !!e.taskId && ids.has(e.taskId);
+  };
+
   // Audit REST routes
   app.get("/audit", async (req) => {
     const { taskId, limit } = req.query as Record<string, string>;
-    return auditLogger.readRecent(taskId, limit ? parseInt(limit) : undefined);
+    const visible = auditVisible(req);
+    return auditLogger.readRecent(taskId, limit ? parseInt(limit) : undefined).filter(visible);
   });
 
   // Live audit SSE stream
   app.get("/audit/stream", async (req, reply) => {
+    const visible = auditVisible(req);
     reply.raw.setHeader("Content-Type", "text/event-stream");
     reply.raw.setHeader("Cache-Control", "no-cache");
     reply.raw.setHeader("Connection", "keep-alive");
     reply.raw.flushHeaders();
 
-    const send = (entry: unknown) => {
-      reply.raw.write(`data: ${JSON.stringify(entry)}\n\n`);
+    const send = (entry: { taskId?: string }) => {
+      if (visible(entry)) reply.raw.write(`data: ${JSON.stringify(entry)}\n\n`);
     };
 
     // Replay recent entries so a new subscriber catches up
     const recent = auditLogger.readRecent(undefined, 100);
     for (const e of recent) send(e);
 
-    const unsub = auditLogger.subscribe(send);
+    const unsub = auditLogger.subscribe(send as (e: unknown) => void);
     req.raw.on("close", unsub);
     return reply;
   });

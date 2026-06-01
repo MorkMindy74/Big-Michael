@@ -62,6 +62,7 @@ export class KnowledgeStore {
             source: doc.source ?? null,
             jurisdiction: doc.jurisdiction ?? null,
             documentType: doc.documentType ?? null,
+            ownerId: doc.ownerId ?? null,
             chunkIndex: i,
             totalChunks: chunks.length,
             content: chunk,
@@ -81,7 +82,7 @@ export class KnowledgeStore {
    */
   async search(
     query: string,
-    opts: { topK?: number; jurisdiction?: string; documentType?: string } = {},
+    opts: { topK?: number; jurisdiction?: string; documentType?: string; ownerId?: string } = {},
   ): Promise<SearchResult[]> {
     this.assertReady();
     const { embedding } = await embed(query);
@@ -89,6 +90,7 @@ export class KnowledgeStore {
     const must: unknown[] = [];
     if (opts.jurisdiction) must.push({ key: "jurisdiction", match: { value: opts.jurisdiction } });
     if (opts.documentType) must.push({ key: "documentType", match: { value: opts.documentType } });
+    if (opts.ownerId) must.push({ key: "ownerId", match: { value: opts.ownerId } });
 
     const results = await this.qdrant.search(COLLECTION, {
       vector: embedding,
@@ -138,7 +140,7 @@ export class KnowledgeStore {
   }
 
   /** List every ingested document (one entry per docId), for pickers/browsing. */
-  async listDocuments(): Promise<Array<{
+  async listDocuments(ownerId?: string): Promise<Array<{
     id: string;
     title: string;
     jurisdiction?: string;
@@ -152,6 +154,7 @@ export class KnowledgeStore {
         limit: 256,
         with_payload: true,
         offset: offset ?? undefined,
+        filter: ownerId ? { must: [{ key: "ownerId", match: { value: ownerId } }] } : undefined,
       });
       for (const pt of res.points) {
         const p = pt.payload as Record<string, unknown>;

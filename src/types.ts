@@ -298,6 +298,8 @@ export interface Document {
   source?: string;
   jurisdiction?: string;
   documentType?: string;
+  /** Lawyer profile id that uploaded/ingested this doc (for access scoping). */
+  ownerId?: string;
   metadata?: Record<string, unknown>;
   ingestedAt: Date;
 }

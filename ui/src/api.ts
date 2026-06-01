@@ -65,6 +65,12 @@ export const api = {
   ingestDocument: (body: { title: string; content: string; source?: string; jurisdiction?: string; documentType?: string }) =>
     fetch("/documents", POST(body)).then(json<{ id: string }>),
 
+  uploadDocument: (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return fetch("/documents/upload", { method: "POST", body: fd }).then(json<{ id: string; title: string }>);
+  },
+
   searchDocuments: (query: string) =>
     fetch(`/documents/search?query=${encodeURIComponent(query)}`).then(json<SearchResult[]>),
 

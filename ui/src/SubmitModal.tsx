@@ -17,6 +17,7 @@ export function SubmitModal({ onClose, onCreated, notify }: {
   const [docs, setDocs] = useState<DocumentRef[]>([]);
   const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     api.listTemplates().then(setTemplates).catch(() => {});
@@ -29,6 +30,23 @@ export function SubmitModal({ onClose, onCreated, notify }: {
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
+  }
+
+  async function onUpload(files: FileList | null) {
+    if (!files?.length) return;
+    setUploading(true);
+    try {
+      for (const file of Array.from(files)) {
+        const { id, title } = await api.uploadDocument(file);
+        notify(`Uploaded "${title}"`);
+        setSelectedDocs((prev) => new Set(prev).add(id));   // auto-attach
+      }
+      setDocs(await api.listDocuments());
+    } catch (e) {
+      notify((e as Error).message);
+    } finally {
+      setUploading(false);
+    }
   }
 
   async function submit() {
@@ -94,9 +112,19 @@ export function SubmitModal({ onClose, onCreated, notify }: {
             </div>
           </div>
 
-          {docs.length > 0 && (
-            <div className="field">
+          <div className="field">
+            <div className="field-head">
               <label>Attach documents · {selectedDocs.size} selected</label>
+              <label className="upload-btn">
+                {uploading ? "Uploading…" : "⬆ Upload file"}
+                <input type="file" multiple accept=".pdf,.txt,.md,.markdown,.csv,.json,.rtf,text/*,application/pdf"
+                  onChange={(e) => { onUpload(e.target.files); e.target.value = ""; }} disabled={uploading} hidden />
+              </label>
+            </div>
+            {docs.length === 0 && !uploading && (
+              <div className="doc-empty">No documents yet — upload a PDF or text file, or add them in the Library.</div>
+            )}
+            {docs.length > 0 && (
               <div className="doc-pick">
                 {docs.map((d) => (
                   <button
@@ -111,8 +139,8 @@ export function SubmitModal({ onClose, onCreated, notify }: {
                   </button>
                 ))}
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
           {templates.length > 0 && (
             <>

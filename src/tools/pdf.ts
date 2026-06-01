@@ -87,6 +87,12 @@ async function runPython(operation: string, args: unknown): Promise<unknown> {
   });
 }
 
+/** Extract plain text from a PDF on disk (used by the document-upload route). */
+export async function extractTextFromPdf(absPath: string): Promise<string> {
+  const result = await runPython("extract_text", { path: assertSafeReadPath(absPath) }) as { pages?: Array<{ text?: string }> };
+  return (result.pages ?? []).map((p) => p.text ?? "").join("\n\n").trim();
+}
+
 // ─── pdf_extract_text ─────────────────────────────────────────────────────────
 
 export const pdfExtractTextTool: ToolImpl = {

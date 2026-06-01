@@ -715,7 +715,11 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
   });
 
   // Live audit SSE stream
+  const MAX_AUDIT_SSE_LISTENERS = 50;
   app.get("/audit/stream", async (req, reply) => {
+    if (auditLogger.listenerCount() >= MAX_AUDIT_SSE_LISTENERS) {
+      return reply.status(429).send({ error: "Too many concurrent audit streams" });
+    }
     const visible = auditVisible(req);
     reply.raw.setHeader("Content-Type", "text/event-stream");
     reply.raw.setHeader("Cache-Control", "no-cache");

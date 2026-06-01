@@ -227,6 +227,18 @@ export class InterRoundMemoryStore {
     });
   }
 
+  /**
+   * Delete all memory entries for a task. Called when a task is deleted so
+   * orphaned vectors don't remain queryable or leak into future tasks.
+   */
+  async deleteByTaskId(taskId: string): Promise<void> {
+    this.assertReady();
+    await this.qdrant.delete(COLLECTION, {
+      filter: { must: [{ key: "taskId", match: { value: taskId } }] },
+    });
+    logger.debug("Memory entries deleted for task", { taskId });
+  }
+
   private assertReady(): void {
     if (!this.ready) throw new Error("InterRoundMemoryStore not initialised — call init() first");
   }

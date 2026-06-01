@@ -8,7 +8,7 @@
 import { QdrantClient } from "@qdrant/js-client-rest";
 import { v4 as uuidv4 } from "uuid";
 import { Config } from "../config.js";
-import { embed } from "../embeddings.js";
+import { embed, embedBatch } from "../embeddings.js";
 import { logger } from "../logger.js";
 import type { Document, SearchResult } from "../types.js";
 
@@ -39,40 +39,49 @@ export class KnowledgeStore {
     this.ready = true;
   }
 
+  // 2 MB cap — prevents a single ingest from fanning out thousands of
+  // concurrent embedding API calls and exhausting rate limits / memory.
+  private static readonly MAX_CONTENT_CHARS = 2 * 1024 * 1024;
+
   /**
    * Ingest a document — chunks it and stores each chunk with its embedding.
    * Returns the document ID.
    */
   async ingest(doc: Omit<Document, "id" | "ingestedAt">): Promise<string> {
     this.assertReady();
+    if (doc.content.length > KnowledgeStore.MAX_CONTENT_CHARS) {
+      throw new Error(
+        `Document content exceeds the ${KnowledgeStore.MAX_CONTENT_CHARS / 1024 / 1024} MB limit ` +
+        `(${Math.round(doc.content.length / 1024)} KB received). Split into smaller documents.`,
+      );
+    }
     const docId = uuidv4();
     const chunks = chunkText(doc.content, CHUNK_SIZE, CHUNK_OVERLAP);
 
     logger.info("Ingesting document", { title: doc.title, chunks: chunks.length });
 
-    const points = await Promise.all(
-      chunks.map(async (chunk, i) => {
-        const { embedding } = await embed(chunk);
-        return {
-          id: uuidv4(),
-          vector: embedding,
-          payload: {
-            docId,
-            title: doc.title,
-            source: doc.source ?? null,
-            jurisdiction: doc.jurisdiction ?? null,
-            documentType: doc.documentType ?? null,
-            ownerId: doc.ownerId ?? null,
-            practiceArea: doc.practiceArea ?? null,
-            detectedClientNumber: doc.detectedClientNumber ?? null,
-            chunkIndex: i,
-            totalChunks: chunks.length,
-            content: chunk,
-            ingestedAt: new Date().toISOString(),
-          },
-        };
-      }),
-    );
+    // Embed all chunks in a single batched API call instead of N concurrent
+    // calls — prevents rate-limit exhaustion and unbounded parallel requests.
+    const embeddings = await embedBatch(chunks);
+
+    const points = chunks.map((chunk, i) => ({
+      id: uuidv4(),
+      vector: embeddings[i].embedding,
+      payload: {
+        docId,
+        title: doc.title,
+        source: doc.source ?? null,
+        jurisdiction: doc.jurisdiction ?? null,
+        documentType: doc.documentType ?? null,
+        ownerId: doc.ownerId ?? null,
+        practiceArea: doc.practiceArea ?? null,
+        detectedClientNumber: doc.detectedClientNumber ?? null,
+        chunkIndex: i,
+        totalChunks: chunks.length,
+        content: chunk,
+        ingestedAt: new Date().toISOString(),
+      },
+    }));
 
     await this.qdrant.upsert(COLLECTION, { wait: true, points });
     logger.info("Document ingested", { docId, chunks: chunks.length });

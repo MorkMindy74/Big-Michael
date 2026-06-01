@@ -187,14 +187,57 @@ explicitly routed local.
 ## REST API
 
 ```
-POST /tasks                 GET /tasks · /tasks/:id · /tasks/:id/stream (SSE)
-POST /tasks/from-template   POST /tasks/:id/gates/:gateId/{approve,reject}
-POST /documents             GET /documents/search · /agents · /templates
-GET  /audit · /audit/stream (SSE)            GET /health
+POST   /tasks                 GET /tasks · /tasks/:id · /tasks/:id/stream (SSE)
+DELETE /tasks/:id             POST /tasks/:id/assign        (partner only)
+POST   /tasks/from-template   POST /tasks/:id/gates/:gateId/{approve,reject}
+POST   /documents             POST /documents/upload (PDF/text) · GET /documents/search
+GET    /agents · /templates · /settings   PUT /settings   (admin)
+GET    /me · /profiles        POST/PATCH/DELETE /profiles    (partner only)
+GET    /auth/providers        GET /auth/:provider/{login,callback} · POST /auth/logout
+GET    /audit · /audit/stream (SSE)        GET /health
 ```
+
+Every matter-scoped route enforces access control — see below.
 
 See [`CLAUDE.md`](CLAUDE.md) for the full architecture guide, agent roster, and extension points
 (adding agents, templates, and Lavern configs).
+
+---
+
+## Lawyers, roles & access control
+
+Big Michael is multi-user when deployed. Identity comes from **OAuth** (Google,
+Microsoft, or LinkedIn); each person is a **lawyer profile** with a role:
+
+- **partner** (admin) — sees every matter, manages the lawyer roster, and assigns
+  matters to lawyers (including sharing one matter across several).
+- **lawyer** — sees **only** the matters they're assigned to. There is no
+  inter-lawyer visibility unless a partner shares a case.
+
+This is enforced at every matter-scoped endpoint (list, detail, SSE stream, gates,
+CSV, rounds, audit) and documents are scoped to their uploader. The `partner`/
+`lawyer` rules are covered by unit tests (`npm test`).
+
+**Local dev runs with auth OFF** — a single "local partner" who sees everything,
+so you don't need OAuth to develop. Turn it on for shared deployments:
+
+```bash
+AUTH_ENABLED=true
+SESSION_SECRET=<random 32+ char secret>
+PUBLIC_BASE_URL=https://api.your-host        # this API (OAuth redirect base)
+PUBLIC_UI_URL=https://app.your-host          # where to land after login
+CORS_ORIGINS=https://app.your-host           # allow-listed browser origin(s)
+ADMIN_EMAILS=you@firm.com                    # emails provisioned as partner
+
+# Register an OAuth app with each provider you want; redirect URI is
+#   <PUBLIC_BASE_URL>/auth/<provider>/callback   (provider ∈ google|microsoft|linkedin)
+GOOGLE_CLIENT_ID=…       GOOGLE_CLIENT_SECRET=…
+MICROSOFT_CLIENT_ID=…    MICROSOFT_CLIENT_SECRET=…
+LINKEDIN_CLIENT_ID=…     LINKEDIN_CLIENT_SECRET=…
+```
+
+Profiles are auto-provisioned on first login (partner if the email is in
+`ADMIN_EMAILS`, otherwise lawyer).
 
 ---
 
@@ -208,8 +251,11 @@ See [`CLAUDE.md`](CLAUDE.md) for the full architecture guide, agent roster, and 
 | `src/protocols/` | CitationGate · DebateProtocol · VerificationPipeline |
 | `src/tools/` | Tool registry — PDF, DocuSeal, docx, tabular, document, tracked-changes |
 | `src/routing/model.ts` | Haiku / Sonnet / Opus / Ollama / local routing |
+| `src/auth/` | Lawyer profiles, roles, RLS access control + OAuth login |
+| `src/settings/` | Live admin settings (DyTopo depth, debate, DocuSeal, modes) |
 | `src/mcp/server.ts` | MCP stdio server + Fastify REST API |
 | `ui/` | Vite + React console |
+| `tests/` | Unit tests (`npm test`) — routing, adapters, access control, path safety |
 | `workflows/mikeoss/` · `src/templates/` | Workflow presets (CP checklist, credit/SHA summary, …) |
 
 ---

@@ -1,9 +1,9 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Discover Legal
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//     http://www.apache.org/licenses/LICENSE-2.0
+// This program is free software: you can redistribute it and/or modify it
+// under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version. See <https://www.gnu.org/licenses/>.
 
 /**
  * Agent definitions — 49 agents across 4 tiers.
@@ -170,7 +170,7 @@ Analytical framework (apply in order):
 
 For each conclusion: cite ECLI reference + paragraph number.
 Confidence scoring: HIGH = clear precedent; MEDIUM = analogical; LOW = novel/unclear.`,
-    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr"],
+    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr", "read_document", "fetch_documents", "find_in_document", "list_documents", "tabular_review", "read_table_cells"],
     skills: ["art-101", "object-restriction", "cjeu-jurisprudence", "cartel-analysis"],
   },
 
@@ -195,7 +195,7 @@ Analytical framework:
 6. Consider network effects and cumulative effects where multiple similar agreements exist (Delimitis).
 
 Required output: structured effect assessment with market share data (if available), citing Commission Guidelines and CJEU case law.`,
-    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr"],
+    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr", "read_document", "fetch_documents", "find_in_document", "list_documents", "tabular_review", "read_table_cells"],
     skills: ["art-101-effects", "counterfactual-analysis", "market-assessment", "competition-effects"],
   },
 
@@ -220,7 +220,7 @@ Apply the four CUMULATIVE conditions (all must be satisfied):
 Also check: applicable block exemptions (VBER 2022, R&D BER, Specialisation BER, TTBER) and their safe harbours.
 
 Output: condition-by-condition assessment with citation; overall exemption verdict (LIKELY / POSSIBLE / UNLIKELY).`,
-    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr"],
+    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr", "read_document", "fetch_documents", "find_in_document", "list_documents", "tabular_review", "read_table_cells"],
     skills: ["art-101-3", "exemption-analysis", "block-exemptions", "efficiency-assessment"],
   },
 
@@ -250,7 +250,7 @@ Analytical steps:
 5. COLLECTIVE DOMINANCE: applicable where two or more undertakings are linked (Airtours/First Choice criteria)
 
 Output: dominance assessment (DOMINANT / NOT DOMINANT / BORDERLINE) with reasoning.`,
-    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr"],
+    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr", "read_document", "fetch_documents", "find_in_document", "list_documents", "tabular_review", "read_table_cells"],
     skills: ["art-102", "dominance-assessment", "market-share-analysis", "barriers-to-entry"],
   },
 
@@ -285,7 +285,7 @@ C. ABUSE OF REGULATORY PROCEDURES:
 Special responsibility: dominant undertakings have a special obligation not to impair genuine undistorted competition (Michelin II).
 
 For each identified conduct: classify → apply test → assess effects → cite authority.`,
-    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr"],
+    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr", "read_document", "fetch_documents", "find_in_document", "list_documents", "tabular_review", "read_table_cells"],
     skills: ["art-102-abuse", "exclusionary-practices", "exploitative-abuse", "dominance-effects"],
   },
 
@@ -315,7 +315,7 @@ Analytical structure:
 6. FAILING FIRM DEFENCE: three-part test (firm would exit; no less anticompetitive acquirer; assets would exit market)
 
 Output: SIEC assessment (LIKELY / POSSIBLE / UNLIKELY) by effects theory, with confidence rating.`,
-    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr"],
+    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr", "read_document", "fetch_documents", "find_in_document", "list_documents", "tabular_review", "read_table_cells"],
     skills: ["merger-control", "siec-test", "horizontal-effects", "vertical-effects", "eumr"],
   },
 
@@ -347,7 +347,7 @@ STEP 3 — JUSTIFICATION: Is the derogation justified by the nature or general s
 - Example: progressive taxation (Gibraltar, C-106/09 P)
 
 Output: three-step analysis with verdict SELECTIVE / NOT SELECTIVE / UNCERTAIN, citing relevant GC/CJEU decisions.`,
-    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr"],
+    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr", "read_document", "fetch_documents", "find_in_document", "list_documents", "tabular_review", "read_table_cells"],
     skills: ["state-aid", "selectivity-analysis", "art-107", "reference-framework"],
   },
 
@@ -381,7 +381,7 @@ COMMISSION BALANCING TEST (for notified aid, State Aid Modernisation framework):
 3. Does the aid have limited distortion of competition and trade?
 
 Output: compatibility route analysis + verdict (COMPATIBLE / INCOMPATIBLE / GBER-EXEMPT) with conditions.`,
-    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr"],
+    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr", "read_document", "fetch_documents", "find_in_document", "list_documents", "tabular_review", "read_table_cells"],
     skills: ["state-aid-compatibility", "gber", "art-107-3", "balancing-test"],
   },
 
@@ -410,7 +410,7 @@ Six lawful bases (Art. 6 GDPR) — assess each in turn:
 For SPECIAL CATEGORIES (Art. 9): identify applicable exception (9(2)(a)–(j)); document specific legal basis.
 
 Output: per-activity lawful basis mapping with justification, risk flags for weak bases, EDPB/DPA citation.`,
-    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr"],
+    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr", "read_document", "fetch_documents", "find_in_document", "list_documents", "tabular_review", "read_table_cells"],
     skills: ["gdpr", "lawful-basis", "art-6", "art-9", "edpb-guidance"],
   },
 
@@ -437,7 +437,7 @@ TRANSFER MECHANISM HIERARCHY:
 5. DEROGATIONS (Art. 49): strict interpretation (explicit consent, contract performance, legal claims, vital interests, public register, compelling legitimate interests — narrowly)
 
 Output: transfer mechanism assessment per data flow, TIA risk rating, required supplementary measures.`,
-    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr"],
+    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr", "read_document", "fetch_documents", "find_in_document", "list_documents", "tabular_review", "read_table_cells"],
     skills: ["gdpr-transfers", "schrems-ii", "sccs", "tia", "adequacy-decisions"],
   },
 
@@ -469,7 +469,7 @@ DMA ANALYSIS:
 4. Procedural: Art. 8 (specification decisions), Art. 26 (market investigations)
 
 Output: provider classification + obligation matrix + compliance gap analysis.`,
-    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr"],
+    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr", "read_document", "fetch_documents", "find_in_document", "list_documents", "tabular_review", "read_table_cells"],
     skills: ["dsa", "dma", "platform-regulation", "gatekeeper-obligations", "vlop"],
   },
 
@@ -503,7 +503,7 @@ For HIGH-RISK systems:
 - Registration in EU database (Art. 51)
 
 Output: classification + obligation checklist + timeline for compliance.`,
-    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr"],
+    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr", "read_document", "fetch_documents", "find_in_document", "list_documents", "tabular_review", "read_table_cells"],
     skills: ["ai-act", "risk-classification", "high-risk-ai", "gpai", "conformity-assessment"],
   },
 
@@ -539,7 +539,7 @@ PROPORTIONALITY (Art. 5(4) TEU):
 3. Proportionality stricto sensu: are burdens proportionate to benefits?
 
 Output: structured competence + subsidiarity + proportionality assessment with Treaty references.`,
-    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr"],
+    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr", "read_document", "fetch_documents", "find_in_document", "list_documents", "tabular_review", "read_table_cells"],
     skills: ["eu-competence", "subsidiarity", "proportionality", "treaty-analysis"],
   },
 
@@ -574,7 +574,7 @@ INTERACTION:
 - National constitutions: Art. 53 CFREU minimum floor; EAW case (Melloni)
 
 Output: rights-by-rights analysis, limitation assessment, proportionality chain.`,
-    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr"],
+    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr", "read_document", "fetch_documents", "find_in_document", "list_documents", "tabular_review", "read_table_cells"],
     skills: ["cfreu", "fundamental-rights", "limitation-analysis", "echr-interaction"],
   },
 
@@ -608,7 +608,7 @@ STATE LIABILITY (Francovich):
 Three conditions: (1) rule confers rights on individuals; (2) breach sufficiently serious; (3) direct causal link between breach and damage.
 
 Output: per-provision analysis of available enforcement routes with case law citations.`,
-    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr"],
+    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr", "read_document", "fetch_documents", "find_in_document", "list_documents", "tabular_review", "read_table_cells"],
     skills: ["direct-effect", "indirect-effect", "supremacy", "state-liability", "francovich"],
   },
 
@@ -637,7 +637,7 @@ STANDING (for non-privileged applicants — Art. 263(4)):
 - Individual concern: Plaumann test (closed class) or regulatory act not entailing implementing measures
 
 Output: procedural option analysis with time limits, risk assessment, and strategic recommendations.`,
-    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr"],
+    allowedTools: ["web_search", "search_knowledge", "query_memory", "pdf_ocr", "read_document", "fetch_documents", "find_in_document", "list_documents", "tabular_review", "read_table_cells"],
     skills: ["cjeu-procedure", "standing", "preliminary-reference", "annulment", "infringement"],
   },
 ];
@@ -677,7 +677,7 @@ Domain-specific applications:
 Intensity of review varies by context: strict in fundamental rights; deferential in economic policy.
 
 Output: structured three-part proportionality chain with verdict, citing domain-specific authority.`,
-    allowedTools: ["search_knowledge", "query_memory"],
+    allowedTools: ["search_knowledge", "query_memory", "read_document", "find_in_document", "list_documents"],
     skills: ["proportionality", "eu-general-principles", "balancing", "cross-domain"],
   },
 
@@ -710,7 +710,7 @@ Assessment dimensions:
    - Tipping and lock-in effects
 
 Output: market power assessment (STRONG / MODERATE / WEAK / ABSENT) with supporting factors rated by strength.`,
-    allowedTools: ["search_knowledge", "query_memory"],
+    allowedTools: ["search_knowledge", "query_memory", "read_document", "find_in_document", "list_documents"],
     skills: ["market-power", "economic-theory", "digital-markets", "barriers-to-entry"],
   },
 
@@ -749,7 +749,7 @@ THREE-PART TEST:
    MITIGATION: can safeguards (encryption, access controls, retention limits, opt-out) tip the balance?
 
 Output: three-part LIA with verdict (PASSES / FAILS / PASSES WITH SAFEGUARDS), listing required mitigations.`,
-    allowedTools: ["search_knowledge", "query_memory"],
+    allowedTools: ["search_knowledge", "query_memory", "read_document", "find_in_document", "list_documents"],
     skills: ["gdpr", "legitimate-interests", "lia", "balancing-test", "edpb"],
   },
 
@@ -780,7 +780,7 @@ NATIONAL PROCEDURAL AUTONOMY:
 ART. 19 TEU: Member states must provide sufficient remedies to ensure effective legal protection in fields covered by EU law; judicial independence as EU law requirement (Associação Sindical, C-64/16).
 
 Output: Art. 47 compliance analysis, national procedure adequacy, required remedies.`,
-    allowedTools: ["search_knowledge", "query_memory"],
+    allowedTools: ["search_knowledge", "query_memory", "read_document", "find_in_document", "list_documents"],
     skills: ["art-47-cfreu", "effective-remedy", "procedural-autonomy", "judicial-protection"],
   },
 
@@ -816,7 +816,7 @@ EXTRA-TERRITORIAL JURISDICTION:
 - Intel geographic scope of Art. 102
 
 Output: nexus analysis per legal basis, causation chain, jurisdictional scope assessment.`,
-    allowedTools: ["search_knowledge", "query_memory"],
+    allowedTools: ["search_knowledge", "query_memory", "read_document", "find_in_document", "list_documents"],
     skills: ["causation", "nexus-analysis", "jurisdiction", "extra-territorial", "state-liability"],
   },
 
@@ -850,7 +850,7 @@ PROPORTIONALITY:
 - Objective pursued (not subjective intent of legislature) determines whether a measure is suitable
 
 Output: intent/effect analysis for the specific legal context, citing authority.`,
-    allowedTools: ["search_knowledge", "query_memory"],
+    allowedTools: ["search_knowledge", "query_memory", "read_document", "find_in_document", "list_documents"],
     skills: ["intent-analysis", "effects-doctrine", "mens-rea", "competition-law"],
   },
 
@@ -884,7 +884,7 @@ HARM THRESHOLDS:
 - 'By its nature' harm: object restrictions bypass harm quantification requirement
 
 Output: harm typology, causation analysis, quantification approach, legal threshold assessment.`,
-    allowedTools: ["search_knowledge", "query_memory"],
+    allowedTools: ["search_knowledge", "query_memory", "read_document", "find_in_document", "list_documents"],
     skills: ["economic-harm", "consumer-welfare", "harm-quantification", "follow-on-damages"],
   },
 
@@ -917,7 +917,7 @@ REGULATORY TARGETING:
 - Anti-discrimination law: prohibited selectivity (protected characteristics)
 
 Output: selectivity analysis — reference framework, derogation, justification — across applicable domain.`,
-    allowedTools: ["search_knowledge", "query_memory"],
+    allowedTools: ["search_knowledge", "query_memory", "read_document", "find_in_document", "list_documents"],
     skills: ["selectivity", "state-aid", "discrimination", "regulatory-targeting"],
   },
 ];
@@ -959,7 +959,7 @@ DRAFTING STANDARDS:
 - Pleas must be legally complete — a court cannot fill gaps
 
 Do not include arguments that have not been authorised by the research findings you receive.`,
-    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text", "pdf_ocr", "docuseal_send_for_signing"],
+    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text", "pdf_ocr", "docuseal_send_for_signing", "docx_generate", "edit_document", "replicate_document", "read_document", "find_in_document", "list_documents"],
     skills: ["cjeu-pleading", "eu-court-procedure", "formal-legal-writing", "ecli-citation"],
   },
 
@@ -990,7 +990,7 @@ PROCEDURAL RIGHTS:
 - Reasonable time: challenge if SO to response time is insufficient
 
 Tone: formal, evidence-based, legally precise. No concession without express instruction.`,
-    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text", "pdf_ocr", "docuseal_send_for_signing"],
+    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text", "pdf_ocr", "docuseal_send_for_signing", "docx_generate", "edit_document", "replicate_document", "read_document", "find_in_document", "list_documents"],
     skills: ["competition-enforcement", "defence-response", "art-102", "commission-procedure"],
   },
 
@@ -1024,7 +1024,7 @@ DRAFTING REQUIREMENTS:
 - Factual accuracy is critical: material false statements void notification
 
 Output: complete, self-contained section drafts; flag where client data is needed.`,
-    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text", "pdf_ocr", "docuseal_send_for_signing"],
+    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text", "pdf_ocr", "docuseal_send_for_signing", "docx_generate", "edit_document", "replicate_document", "read_document", "find_in_document", "list_documents"],
     skills: ["merger-control", "form-co", "eumr-procedure", "market-definition-drafting"],
   },
 
@@ -1058,7 +1058,7 @@ KEY CONCEPTS TO ADDRESS:
 - Environmental and energy aid: specific sections for carbon price corrections, renewable energy
 
 Output: complete notification draft flagging data gaps for member state completion.`,
-    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text", "pdf_ocr", "docuseal_send_for_signing"],
+    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text", "pdf_ocr", "docuseal_send_for_signing", "docx_generate", "edit_document", "replicate_document", "read_document", "find_in_document", "list_documents"],
     skills: ["state-aid-notification", "sani", "gber-self-assessment", "art-108"],
   },
 
@@ -1097,7 +1097,7 @@ DRAFTING PRINCIPLES:
 - Privilege: identify legally privileged communications; assert appropriately
 
 Output: structured application draft with placeholder tags [CLIENT DATA REQUIRED] for sensitive specifics.`,
-    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text", "pdf_ocr", "docuseal_send_for_signing"],
+    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text", "pdf_ocr", "docuseal_send_for_signing", "docx_generate", "edit_document", "replicate_document", "read_document", "find_in_document", "list_documents"],
     skills: ["leniency", "cartel-procedure", "corporate-statement", "immunity-application"],
   },
 
@@ -1131,7 +1131,7 @@ DSAR RESPONSE:
 - Format: structured, human-readable; machine-readable if requested
 
 Tone: co-operative but legally precise; do not admit breach without instruction.`,
-    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text", "pdf_ocr", "docuseal_send_for_signing"],
+    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text", "pdf_ocr", "docuseal_send_for_signing", "docx_generate", "edit_document", "replicate_document", "read_document", "find_in_document", "list_documents"],
     skills: ["gdpr-enforcement", "dpa-procedure", "complaint-response", "dsar"],
   },
 
@@ -1166,7 +1166,7 @@ APPLICATION STRUCTURE:
 5. Annex list
 
 INTERIM MEASURES: consider concurrent Art. 278/279 application (urgency; prima facie case; balance of interests).`,
-    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text", "pdf_ocr", "docuseal_send_for_signing"],
+    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text", "pdf_ocr", "docuseal_send_for_signing", "docx_generate", "edit_document", "replicate_document", "read_document", "find_in_document", "list_documents"],
     skills: ["art-263", "annulment-action", "standing-analysis", "general-court-procedure"],
   },
 
@@ -1200,7 +1200,7 @@ STYLE:
 - Cite authority in footnotes — not in main text unless the authority is itself the issue
 
 Do not draft this memo in the style of a court submission. It is a commercial advisory.`,
-    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text", "pdf_ocr", "docuseal_send_for_signing"],
+    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text", "pdf_ocr", "docuseal_send_for_signing", "docx_generate", "edit_document", "replicate_document", "read_document", "find_in_document", "list_documents"],
     skills: ["client-advice", "memo-writing", "risk-matrix", "commercial-awareness"],
   },
 
@@ -1234,7 +1234,7 @@ TONE:
 - State financial figures in absolute terms, not percentages alone
 - Frame in terms of business risk, not legal doctrine
 - No jargon, no Latin, no footnotes (attach a technical memo if needed)`,
-    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text", "pdf_ocr", "docuseal_send_for_signing"],
+    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text", "pdf_ocr", "docuseal_send_for_signing", "docx_generate", "edit_document", "replicate_document", "read_document", "find_in_document", "list_documents"],
     skills: ["board-communication", "risk-briefing", "corporate-governance", "executive-writing"],
   },
 
@@ -1266,7 +1266,7 @@ STRATEGIC NOTES:
 - Timeline: Commission has no fixed decision deadline; follow-up obligations
 
 Output: complete Form C draft with [CONFIDENTIAL] markers; cover letter for submission.`,
-    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text", "pdf_ocr", "docuseal_send_for_signing"],
+    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text", "pdf_ocr", "docuseal_send_for_signing", "docx_generate", "edit_document", "replicate_document", "read_document", "find_in_document", "list_documents"],
     skills: ["competition-complaint", "form-c", "commission-procedure", "standing"],
   },
 
@@ -1303,7 +1303,7 @@ TECHNICAL ACCURACY:
 - Note implementation costs and compliance timelines
 
 Output: complete consultation response draft; word count per section; ready for submission.`,
-    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text", "pdf_ocr", "docuseal_send_for_signing"],
+    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text", "pdf_ocr", "docuseal_send_for_signing", "docx_generate", "edit_document", "replicate_document", "read_document", "find_in_document", "list_documents"],
     skills: ["consultation-response", "eu-policy", "advocacy-drafting", "impact-assessment"],
   },
 
@@ -1344,7 +1344,7 @@ DATA PROTECTION DD:
 - Existing DPA investigations or enforcement
 
 Output: structured section drafts with [CLIENT DATA] placeholders; ready for partner review.`,
-    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text", "pdf_ocr", "docuseal_send_for_signing"],
+    allowedTools: ["search_knowledge", "query_memory", "pdf_generate", "pdf_extract_text", "pdf_ocr", "docuseal_send_for_signing", "docx_generate", "edit_document", "replicate_document", "read_document", "find_in_document", "list_documents"],
     skills: ["due-diligence", "m-and-a", "risk-grading", "spa-drafting", "dd-report"],
   },
 ];

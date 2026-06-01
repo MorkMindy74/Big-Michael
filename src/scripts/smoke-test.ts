@@ -1,9 +1,9 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Discover Legal
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//     http://www.apache.org/licenses/LICENSE-2.0
+// This program is free software: you can redistribute it and/or modify it
+// under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version. See <https://www.gnu.org/licenses/>.
 
 /**
  * Smoke test — validates the full stack is wired up correctly without
@@ -96,13 +96,43 @@ check("merger-pre-notification present", !!store.get("merger-pre-notification"))
 // ─── 5. Model routing ─────────────────────────────────────────────────────────
 
 process.stdout.write("\n[5] Model routing\n");
-check("descriptor → Haiku", selectModel({ taskType: "descriptor" }).includes("haiku"));
-check("extraction → Haiku", selectModel({ taskType: "extraction" }).includes("haiku"));
-check("debate → Opus", selectModel({ taskType: "debate" }).includes("opus"));
-check("synthesis → Opus", selectModel({ taskType: "synthesis" }).includes("opus"));
-check("T0 → Opus", selectModel({ tier: 0, taskType: "reasoning" }).includes("opus"));
-check("T3 → Haiku", selectModel({ tier: 3, taskType: "reasoning" }).includes("haiku"));
-check("T1 reasoning → Sonnet", selectModel({ tier: 1, taskType: "reasoning" }).includes("sonnet"));
+// Routing is environment-sensitive: LOCAL_INFERENCE_TIERS / OLLAMA_* in .env
+// redirect some or all tiers to a local model. Assert the contract that
+// actually applies for the active configuration instead of assuming cloud.
+const { Config: RoutingCfg } = await import("../config.js");
+const localTiers = RoutingCfg.local.localInferenceTiers.trim();
+const localAll = !!RoutingCfg.local.localInferenceUrl && localTiers === "all";
+const localModelName = RoutingCfg.local.localInferenceModel;
+
+if (localAll) {
+  // Every tier/task routes to the local OpenAI-compatible server (LM Studio,
+  // Jan, vLLM…). Cloud Haiku/Sonnet/Opus assertions do not apply.
+  process.stdout.write(
+    `  ⓘ local inference active (LOCAL_INFERENCE_TIERS=all) — every tier → 'local:${localModelName}'\n`,
+  );
+  check("local routing: lightweight task → local", selectModel({ taskType: "descriptor" }).startsWith("local:"));
+  check("local routing: debate → local", selectModel({ taskType: "debate" }).startsWith("local:"));
+  check("local routing: T0 reasoning → local", selectModel({ tier: 0, taskType: "reasoning" }).startsWith("local:"));
+  check("local routing: T3 reasoning → local", selectModel({ tier: 3, taskType: "reasoning" }).startsWith("local:"));
+} else if (!RoutingCfg.local.ollamaEnabled) {
+  // Pure cloud routing.
+  check("descriptor → Haiku", selectModel({ taskType: "descriptor" }).includes("haiku"));
+  check("extraction → Haiku", selectModel({ taskType: "extraction" }).includes("haiku"));
+  check("debate → Opus", selectModel({ taskType: "debate" }).includes("opus"));
+  check("synthesis → Opus", selectModel({ taskType: "synthesis" }).includes("opus"));
+  check("T0 → Opus", selectModel({ tier: 0, taskType: "reasoning" }).includes("opus"));
+  check("T3 → Haiku", selectModel({ tier: 3, taskType: "reasoning" }).includes("haiku"));
+  check("T1 reasoning → Sonnet", selectModel({ tier: 1, taskType: "reasoning" }).includes("sonnet"));
+} else {
+  // Ollama enabled for some tiers — lightweight tasks may go local, but the
+  // correctness-critical paths (debate, synthesis, T0) always stay on cloud.
+  process.stdout.write(
+    "  ⓘ Ollama enabled — verifying cloud-critical paths (debate / synthesis / T0) stay on Claude\n",
+  );
+  check("debate → Opus (cloud-critical)", selectModel({ taskType: "debate" }).includes("opus"));
+  check("synthesis → Opus (cloud-critical)", selectModel({ taskType: "synthesis" }).includes("opus"));
+  check("T0 → Opus (cloud-critical)", selectModel({ tier: 0, taskType: "reasoning" }).includes("opus"));
+}
 
 // Ollama routing — simulate OLLAMA_ENABLED=true by checking prefix logic
 const { isOllamaModel, ollamaModelName } = await import("../providers/index.js");

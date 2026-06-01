@@ -1,9 +1,9 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Discover Legal
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//     http://www.apache.org/licenses/LICENSE-2.0
+// This program is free software: you can redistribute it and/or modify it
+// under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version. See <https://www.gnu.org/licenses/>.
 
 /**
  * MCP Server — exposes the full orchestration system over the Model Context Protocol.
@@ -244,6 +244,29 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     return task;
   });
 
+  // Structured tabulate output as downloadable CSV
+  app.get("/tasks/:id/table.csv", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const task = orchestrator.getTask(id);
+    if (!task) return reply.status(404).send({ error: "Task not found" });
+    if (!task.table) return reply.status(404).send({ error: "No table available for this task" });
+
+    const esc = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
+    const { columns, rows } = task.table;
+    const hasConf = rows.some((r) => r._confidence);
+    const outCols = hasConf ? [...columns, "Confidence", "Sources"] : columns;
+    const cellFor = (r: Record<string, string>, c: string) =>
+      c === "Confidence" ? (r._confidence ?? "") : c === "Sources" ? (r._sources ?? "") : (r[c] ?? "");
+    const lines = [
+      outCols.map(esc).join(","),
+      ...rows.map((r) => outCols.map((c) => esc(cellFor(r, c))).join(",")),
+    ];
+
+    reply.header("Content-Type", "text/csv; charset=utf-8");
+    reply.header("Content-Disposition", `attachment; filename="big-michael-${id}.csv"`);
+    return lines.join("\r\n");
+  });
+
   app.post("/tasks/:taskId/gates/:gateId/approve", async (req, reply) => {
     const { taskId, gateId } = req.params as { taskId: string; gateId: string };
     const { note } = (req.body ?? {}) as { note?: string };
@@ -263,6 +286,8 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     const docId = await orchestrator.knowledge.ingest(body);
     return reply.status(201).send({ id: docId });
   });
+
+  app.get("/documents", async () => orchestrator.knowledge.listDocuments());
 
   app.get("/documents/search", async (req) => {
     const { query, topK, jurisdiction, documentType } = req.query as Record<string, string>;

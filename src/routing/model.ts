@@ -145,9 +145,9 @@ export function estimateComplexity(text: string): Complexity {
     "conflict",
     "fundamental right",
     "constitutional",
-    "abuse of dominance",
-    "state aid",
-    "gatekeeper",
+    "antitrust",
+    "merger control",
+    "sanctions",
   ];
   const lowSignals = ["extract", "list", "identify", "translate", "summarise", "count"];
 

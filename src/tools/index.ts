@@ -64,7 +64,7 @@ const webSearchTool: ToolImpl = {
   schema: {
     name: "web_search",
     description:
-      "Search the web for legal information. Prioritise EUR-Lex, CURIA, EDPB, and official EU publications.",
+      "Search the web for legal information. Prioritise official legislation portals, court and regulator sites, and reputable legal databases for the relevant jurisdiction.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -119,7 +119,7 @@ const searchKnowledgeTool: ToolImpl = {
       properties: {
         query: { type: "string", description: "Search query" },
         top_k: { type: "number", description: "Number of results (default 6)" },
-        jurisdiction: { type: "string", description: "Optional: filter by jurisdiction (e.g. 'EU', 'DE')" },
+        jurisdiction: { type: "string", description: "Optional: filter by jurisdiction (e.g. 'US-NY', 'England & Wales', 'EU', 'SG')" },
         document_type: { type: "string", description: "Optional: filter by document type" },
       },
       required: ["query"],
@@ -216,7 +216,7 @@ const translateTool: ToolImpl = {
   name: "translate",
   schema: {
     name: "translate",
-    description: "Translate legal text between EU languages, preserving legal terms of art.",
+    description: "Translate legal text across languages, preserving legal terms of art.",
     input_schema: {
       type: "object" as const,
       properties: {

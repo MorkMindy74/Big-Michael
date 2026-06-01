@@ -110,7 +110,7 @@ export const docusealSendForSigningTool: ToolImpl = {
         },
         documentName: {
           type: "string",
-          description: "Human-readable name for the document, e.g. 'GDPR DPA 2026'.",
+          description: "Human-readable name for the document, e.g. 'Mutual NDA 2026'.",
         },
         signers: {
           type: "array",

@@ -89,9 +89,9 @@ const store = new TemplateStore();
 const templateDir = join(dirname(fileURLToPath(import.meta.url)), "../templates");
 await store.load(templateDir);
 check("Templates loaded >= 3", store.list().length >= 3, `got ${store.list().length}`);
-check("eu-competition-brief present", !!store.get("eu-competition-brief"));
-check("gdpr-complaint-response present", !!store.get("gdpr-complaint-response"));
-check("merger-pre-notification present", !!store.get("merger-pre-notification"));
+check("contract-review present", !!store.get("contract-review"));
+check("regulatory-assessment present", !!store.get("regulatory-assessment"));
+check("client-advice-memo present", !!store.get("client-advice-memo"));
 
 // ─── 5. Model routing ─────────────────────────────────────────────────────────
 

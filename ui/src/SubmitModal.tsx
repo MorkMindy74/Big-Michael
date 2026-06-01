@@ -61,7 +61,7 @@ export function SubmitModal({ onClose, onCreated, notify }: {
             <label>The matter</label>
             <textarea
               autoFocus
-              placeholder="e.g. Assess whether our acquisition of Acme GmbH triggers a mandatory notification under EU Merger Regulation 139/2004…"
+              placeholder="e.g. Review this master services agreement and summarise the key risks, obligations, and unusual terms under New York law…"
               value={description}
               onChange={(e) => { setDescription(e.target.value); setTemplateId(""); }}
             />

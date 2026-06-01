@@ -9,7 +9,7 @@ export function Library({ onClose, notify }: { onClose: () => void; notify: (m: 
   // ingest
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
-  const [jurisdiction, setJurisdiction] = useState("EU");
+  const [jurisdiction, setJurisdiction] = useState("");
   const [docType, setDocType] = useState("contract");
   const [busy, setBusy] = useState(false);
   const [lastId, setLastId] = useState<string | null>(null);
@@ -65,7 +65,7 @@ export function Library({ onClose, notify }: { onClose: () => void; notify: (m: 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
               <div className="field">
                 <label>Jurisdiction</label>
-                <input value={jurisdiction} onChange={(e) => setJurisdiction(e.target.value)} placeholder="EU" />
+                <input value={jurisdiction} onChange={(e) => setJurisdiction(e.target.value)} placeholder="e.g. US-NY, England & Wales, EU, SG" />
               </div>
               <div className="field">
                 <label>Document type</label>

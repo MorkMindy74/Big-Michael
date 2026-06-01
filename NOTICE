@@ -35,6 +35,14 @@ Third-party components
             built-in workflows converted to MikeOSSWorkflow JSON, and selected
             backend capabilities ported to Big Michael's tool/orchestration
             layer. These portions remain (C) the Mike authors under AGPL-3.0.
+   Synced:  Reviewed against upstream commit d39f580 (2026-05-18). The three
+            built-in workflow prompts (CP checklist, credit-agreement summary,
+            shareholder-agreement summary) are byte-for-byte in sync with
+            upstream, aside from Big Michael's appended {{description}} /
+            {{document}} template placeholders. Mike's later changes are
+            specific to its Next.js + Supabase application (storage caching,
+            download-token signing, project sharing) and do not apply to Big
+            Michael's tool/orchestration architecture.
 
 Trademarks: "Lavern", "The Shem", and "Mike" are the marks of their respective
 authors and are used here only for attribution; no endorsement is implied.

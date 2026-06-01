@@ -58,6 +58,7 @@ A real matter, mid-flight — the bench self-organising, then the cited result.
 | Text in, text out | Cited briefs, **.docx** with tracked changes, e-signed via DocuSeal |
 | Cloud-only | 3-tier cloud routing **or** fully local (Ollama / LM Studio / vLLM) |
 | One-size config | **Admin panel** — lawyer/non-lawyer mode, DyTopo depth, verification & DocuSeal, applied live |
+| Generic document store | Documents auto-classified by **practice area** with matching lawyers surfaced on ingest |
 
 ---
 
@@ -188,13 +189,23 @@ explicitly routed local.
 
 ```
 POST   /tasks                 GET /tasks · /tasks/:id · /tasks/:id/stream (SSE)
-DELETE /tasks/:id             POST /tasks/:id/assign        (partner only)
+DELETE /tasks/:id             POST /tasks/:id/assign         (partner only)
 POST   /tasks/from-template   POST /tasks/:id/gates/:gateId/{approve,reject}
 POST   /documents             POST /documents/upload (PDF/text) · GET /documents/search
-GET    /agents · /templates · /settings   PUT /settings   (admin)
-GET    /me · /profiles        POST/PATCH/DELETE /profiles    (partner only)
+GET    /agents · /templates · /settings   PUT /settings      (admin)
+GET    /me · /profiles        POST /profiles                 (partner only)
+                              PATCH /profiles/:id            (partner or profile owner)
+                              DELETE /profiles/:id           (partner only)
+GET    /clients               POST /clients · PATCH/DELETE /clients/:id   (partner only)
+POST   /clients/:id/matters   DELETE /clients/:id/matters/:matterNumber   (partner only)
+POST   /clients/check-conflict                                             (partner only)
 GET    /auth/providers        GET /auth/:provider/{login,callback} · POST /auth/logout
 GET    /audit · /audit/stream (SSE)        GET /health
+```
+
+Document ingestion (`POST /documents`, `POST /documents/upload`) returns enriched metadata:
+```json
+{ "id": "…", "practiceArea": "Corporate & M&A", "detectedClient": { "clientNumber": "C-001", "clientName": "Acme Corp" }, "suggestedLawyers": [{ "id": "…", "name": "Jane Smith" }] }
 ```
 
 Every matter-scoped route enforces access control — see below.
@@ -209,14 +220,36 @@ See [`CLAUDE.md`](CLAUDE.md) for the full architecture guide, agent roster, and 
 Big Michael is multi-user when deployed. Identity comes from **OAuth** (Google,
 Microsoft, or LinkedIn); each person is a **lawyer profile** with a role:
 
-- **partner** (admin) — sees every matter, manages the lawyer roster, and assigns
-  matters to lawyers (including sharing one matter across several).
+- **partner** (admin) — sees every matter, manages the lawyer roster, assigns
+  matters to lawyers, and manages clients.
 - **lawyer** — sees **only** the matters they're assigned to. There is no
   inter-lawyer visibility unless a partner shares a case.
 
 This is enforced at every matter-scoped endpoint (list, detail, SSE stream, gates,
 CSV, rounds, audit) and documents are scoped to their uploader. The `partner`/
 `lawyer` rules are covered by unit tests (`npm test`).
+
+### Lawyer profiles
+
+Each profile stores:
+- **Name, email, title, role** — managed by partners in the Admin › Users tab
+- **Practice areas** — one or more of the 15 canonical areas (Corporate & M&A, Competition & Antitrust, Employment & Labour, IP, Real Estate, Banking & Finance, Litigation, Tax, Regulatory & Compliance, Data Privacy, Immigration, Insolvency, Capital Markets, Insurance, Environmental & Climate)
+- **Bio** — short free-text description
+
+Lawyers can edit their own name, title, bio, and practice areas. Partners control role and can edit any profile.
+
+### Clients & matters
+
+Partners maintain a client roster (`GET/POST/PATCH/DELETE /clients`). Each client has:
+- **Client number** — unique firm reference (e.g. `C-001`)
+- **Matters** — sub-list of matter numbers with descriptions and practice areas
+- **Adverse parties** — names of opposing parties; used for automatic conflict-of-interest checks
+
+When a new client is added the system immediately checks their name against all existing clients' adverse-party lists and surfaces a conflict alert if there is a match. Clicking a client number in the matters sidebar filters the list to that client's matters.
+
+### Practice area auto-detection
+
+Every document ingested through the Library (pasted or uploaded) is automatically classified into one of the 15 practice areas by a lightweight Claude Haiku call. The system also tries to identify which existing client the document relates to. Both the detected area and any matching client are returned in the API response alongside a list of suggested lawyers whose practice areas align.
 
 **Local dev runs with auth OFF** — a single "local partner" who sees everything,
 so you don't need OAuth to develop. Turn it on for shared deployments:
@@ -254,6 +287,8 @@ Profiles are auto-provisioned on first login (partner if the email is in
 | `src/tools/` | Tool registry — PDF, DocuSeal, docx, tabular, document, tracked-changes |
 | `src/routing/model.ts` | Haiku / Sonnet / Opus / Ollama / local routing |
 | `src/auth/` | Lawyer profiles, roles, RLS access control + OAuth login |
+| `src/clients/` | Client roster, matter sub-lists, conflict-of-interest checks |
+| `src/services/classifier.ts` | Haiku-based practice area + client detection on document ingest |
 | `src/settings/` | Live admin settings (DyTopo depth, debate, DocuSeal, modes) |
 | `src/mcp/server.ts` | MCP stdio server + Fastify REST API |
 | `ui/` | Vite + React console |

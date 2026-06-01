@@ -107,6 +107,9 @@ Each DyTopo round:
 | `src/tools/docuseal.ts` | DocuSeal e-signature tools |
 | `src/audit/index.ts` | Append-only JSONL audit log + SSE stream |
 | `src/secrets/index.ts` | Infisical REST API loader |
+| `src/auth/index.ts` | Lawyer profiles (practiceAreas, bio, role), RLS access control |
+| `src/clients/index.ts` | Client roster, matter sub-lists, conflict-of-interest checks |
+| `src/services/classifier.ts` | Haiku-based practice area detection + client identification on ingest |
 | `src/mcp/server.ts` | MCP stdio server + Fastify REST API |
 | `src/templates/*.json` | Task templates (eu-competition-brief etc.) |
 | `scripts/pdf_tools.py` | Python PDF backend — called by tools/pdf.ts |
@@ -189,16 +192,26 @@ POST   /tasks/from-template         submit from template
 GET    /tasks/:taskId/rounds/:round get round state
 POST   /tasks/:taskId/gates/:gateId/approve
 POST   /tasks/:taskId/gates/:gateId/reject
-POST   /documents                   ingest document (text)
-POST   /documents/upload            upload a PDF / text file → extract + ingest
+POST   /documents                   ingest document (text) → returns practiceArea + detectedClient + suggestedLawyers
+POST   /documents/upload            upload a PDF / text file → extract + ingest + classify
 GET    /documents/search            semantic search (owner-scoped)
 GET    /agents                      list agents
 GET    /templates                   list templates
 GET    /settings                    read admin settings
 PUT    /settings                    update admin settings (live)
 GET    /me                          current principal + authEnabled
-GET    /profiles                    lawyer roster
-POST   /profiles · PATCH/DELETE /profiles/:id   manage lawyers   [partner only]
+GET    /profiles                    lawyer roster (includes practiceAreas, bio)
+GET    /profiles/:id                single profile
+POST   /profiles                    create lawyer             [partner only]
+PATCH  /profiles/:id                update profile            [partner, or profile owner (no role change)]
+DELETE /profiles/:id                remove lawyer             [partner only]
+GET    /clients                     client roster             [partner only]
+POST   /clients                     create client             [partner only]
+PATCH  /clients/:id                 update client             [partner only]
+DELETE /clients/:id                 delete client             [partner only]
+POST   /clients/:id/matters         add matter to client      [partner only]
+DELETE /clients/:id/matters/:num    remove matter             [partner only]
+POST   /clients/check-conflict      check name against adversary lists  [partner only]
 GET    /auth/providers              which OAuth providers are configured
 GET    /auth/:provider/login        start OAuth login (google|microsoft|linkedin)
 GET    /auth/:provider/callback     OAuth callback → session cookie
@@ -216,6 +229,19 @@ and every request carries a `SessionUser` from the signed session cookie. A
 matters assigned to them. Locally (`AUTH_ENABLED=false`) every request is a
 single local partner. See `src/auth/` and the README "Lawyers, roles & access
 control" section. Access rules are unit-tested (`npm test`).
+
+### Practice area classification
+
+`src/services/classifier.ts` runs two Haiku calls on every document ingest:
+
+1. **`detectPracticeArea(title, content)`** — classifies into one of 15 canonical practice areas. The canonical list lives in `src/types.ts` as `PRACTICE_AREAS` and is mirrored in `ui/src/types.ts`.
+2. **`detectClient(title, content, clients)`** — matches the document against the known client roster by client number and name.
+
+Both results are stored in the Qdrant document payload (`practiceArea`, `detectedClientNumber`) and returned from the REST API alongside `suggestedLawyers` — profiles whose `practiceAreas` include the detected area.
+
+### Conflict of interest
+
+`ClientStore.checkConflict(name)` does a case-insensitive substring match between the incoming client name and every existing client's `adversaries` array. It is called automatically on `POST /clients` and the result is included in the response. Partners can also call `POST /clients/check-conflict` standalone.
 
 ## Known limitations
 

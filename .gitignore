@@ -36,3 +36,4 @@ output/documents/
 audit.jsonl
 .tasks.json
 .settings.json
+.profiles.json

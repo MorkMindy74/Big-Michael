@@ -11,6 +11,8 @@ import { resolve } from "node:path";
 import { estimateComplexity } from "../src/routing/model.js";
 import { LavernAdapter, fromMikeOSSWorkflow, instantiateTemplate } from "../src/adapters/lavern.js";
 import { assertSafeReadPath } from "../src/tools/pdf.js";
+import { canViewTask, filterVisible, isPartner } from "../src/auth/index.js";
+import type { SessionUser } from "../src/types.js";
 
 // ─── Model routing: complexity heuristic ────────────────────────────────────
 
@@ -91,4 +93,43 @@ test("assertSafeReadPath: blocks a relative .env escape", () => {
 test("assertSafeReadPath: rejects empty / non-string input", () => {
   assert.throws(() => assertSafeReadPath(""), /file path is required/);
   assert.throws(() => assertSafeReadPath(undefined), /file path is required/);
+});
+
+// ─── Access control: no inter-lawyer view unless partner-shared ──────────────
+
+const partner: SessionUser = { profileId: "p1", name: "P", email: "p@x", role: "partner" };
+const alice: SessionUser = { profileId: "a", name: "Alice", email: "a@x", role: "lawyer" };
+const bob: SessionUser = { profileId: "b", name: "Bob", email: "b@x", role: "lawyer" };
+const matters = [
+  { assignedLawyerIds: ["a"] },           // Alice's
+  { assignedLawyerIds: ["b"] },           // Bob's
+  { assignedLawyerIds: ["a", "b"] },      // partner-shared across both
+  { assignedLawyerIds: [] },              // unassigned
+];
+
+test("partner sees every matter", () => {
+  assert.equal(isPartner(partner), true);
+  assert.equal(filterVisible(partner, matters).length, 4);
+});
+
+test("a lawyer sees only their own matters (no inter-lawyer view)", () => {
+  const visible = filterVisible(alice, matters);
+  assert.equal(visible.length, 2);             // her solo matter + the shared one
+  assert.ok(!visible.includes(matters[1]));    // never Bob's solo matter
+  assert.equal(canViewTask(alice, matters[1]), false);
+});
+
+test("a partner-shared matter is visible to both assigned lawyers", () => {
+  assert.equal(canViewTask(alice, matters[2]), true);
+  assert.equal(canViewTask(bob, matters[2]), true);
+});
+
+test("unassigned matters are invisible to lawyers, visible to partners", () => {
+  assert.equal(canViewTask(alice, matters[3]), false);
+  assert.equal(canViewTask(partner, matters[3]), true);
+});
+
+test("no principal (unauthenticated) sees nothing", () => {
+  assert.equal(filterVisible(null, matters).length, 0);
+  assert.equal(canViewTask(null, matters[0]), false);
 });

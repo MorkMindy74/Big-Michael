@@ -1,12 +1,28 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { api } from "./api";
-import type { AppSettings } from "./types";
+import type { AppSettings, LawyerProfile } from "./types";
 
-export function AdminPanel({ onClose, notify }: { onClose: () => void; notify: (m: string) => void }) {
+export function AdminPanel({ onClose, notify, isPartner, profiles, onProfilesChange }: {
+  onClose: () => void; notify: (m: string) => void;
+  isPartner: boolean; profiles: LawyerProfile[]; onProfilesChange: () => void;
+}) {
   const [s, setS] = useState<AppSettings | null>(null);
   const [apiKey, setApiKey] = useState("");           // only sent if the user types a new one
   const [busy, setBusy] = useState(false);
+  const [np, setNp] = useState({ name: "", email: "", role: "lawyer" });
+
+  async function addLawyer() {
+    if (!np.name.trim() || !np.email.trim()) { notify("Name and email required"); return; }
+    setBusy(true);
+    try { await api.createProfile(np); setNp({ name: "", email: "", role: "lawyer" }); onProfilesChange(); notify("Lawyer added"); }
+    catch (e) { notify((e as Error).message); } finally { setBusy(false); }
+  }
+  async function removeLawyer(id: string) {
+    if (!window.confirm("Remove this lawyer?")) return;
+    try { await api.deleteProfile(id); onProfilesChange(); notify("Lawyer removed"); }
+    catch (e) { notify((e as Error).message); }
+  }
 
   useEffect(() => { api.getSettings().then(setS).catch((e) => notify((e as Error).message)); }, [notify]);
 
@@ -41,6 +57,34 @@ export function AdminPanel({ onClose, notify }: { onClose: () => void; notify: (
 
         {!s ? <div className="modal-body"><div className="placeholder">Loading settings…</div></div> : (
           <div className="modal-body">
+            {/* ── Lawyers (partner only) ──────────────────────────────────── */}
+            {isPartner && (
+              <div className="admin-section">
+                <div className="admin-section-title">Lawyers &amp; roles</div>
+                <div className="lawyer-list">
+                  {profiles.map((p) => (
+                    <div key={p.id} className="lawyer-row">
+                      <span className="avatar sm" style={{ background: p.color ?? "var(--gold-soft)" }}>
+                        {p.name.split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("")}
+                      </span>
+                      <span className="lawyer-name">{p.name}<span className="lawyer-email">{p.email}</span></span>
+                      <span className={`pill sm ${p.role === "partner" ? "gold" : ""}`}>{p.role}</span>
+                      <button className="btn reject sm" onClick={() => removeLawyer(p.id)} title="Remove">✕</button>
+                    </div>
+                  ))}
+                </div>
+                <div className="lawyer-add">
+                  <input placeholder="Full name" value={np.name} onChange={(e) => setNp({ ...np, name: e.target.value })} />
+                  <input placeholder="email@firm.com" value={np.email} onChange={(e) => setNp({ ...np, email: e.target.value })} />
+                  <select value={np.role} onChange={(e) => setNp({ ...np, role: e.target.value })}>
+                    <option value="lawyer">Lawyer</option>
+                    <option value="partner">Partner</option>
+                  </select>
+                  <button className="btn primary sm" disabled={busy} onClick={addLawyer}>＋ Add</button>
+                </div>
+              </div>
+            )}
+
             {/* ── Practice mode ───────────────────────────────────────────── */}
             <div className="admin-section">
               <div className="admin-section-title">Presentation</div>

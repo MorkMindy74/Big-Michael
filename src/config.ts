@@ -56,6 +56,25 @@ export const Config = {
     apiKey: optional("API_KEY", ""),
   },
 
+  // Authentication, sessions, and access control.
+  auth: {
+    // OFF by default → local dev runs with no login as a single partner who
+    // sees everything. Turn ON (with OAuth creds below) for shared deployments.
+    enabled: optional("AUTH_ENABLED", "false") === "true",
+    sessionSecret: optional("SESSION_SECRET", "dev-insecure-change-me-in-production-please"),
+    // The browser origin(s) allowed by CORS. Defaults to local Vite ports.
+    allowedOrigins: optional("CORS_ORIGINS", "http://localhost:5173,http://localhost:5174")
+      .split(",").map((s) => s.trim()).filter(Boolean),
+    // Public base URL of THIS API (for OAuth redirect URIs).
+    baseUrl: optional("PUBLIC_BASE_URL", "http://localhost:3101"),
+    // OAuth app credentials — register apps with each provider and set these.
+    providers: {
+      google:    { clientId: optional("GOOGLE_CLIENT_ID", ""),    clientSecret: optional("GOOGLE_CLIENT_SECRET", "") },
+      microsoft: { clientId: optional("MICROSOFT_CLIENT_ID", ""), clientSecret: optional("MICROSOFT_CLIENT_SECRET", "") },
+      linkedin:  { clientId: optional("LINKEDIN_CLIENT_ID", ""),  clientSecret: optional("LINKEDIN_CLIENT_SECRET", "") },
+    },
+  },
+
   // Per-agent agentic loop — how many tool_use iterations an agent may run
   // before it must return a final answer.
   agents: {
@@ -112,6 +131,7 @@ export const Config = {
   persistence: {
     tasksFile: optional("TASKS_FILE", ".tasks.json"),
     settingsFile: optional("SETTINGS_FILE", ".settings.json"),
+    profilesFile: optional("PROFILES_FILE", ".profiles.json"),
   },
 
   logging: {

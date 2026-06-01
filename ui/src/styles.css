@@ -496,6 +496,41 @@ body::after {
 }
 .card-matter { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint); }
 
+/* ─── Matter actions: assignees, assign menu, delete ─────────────────── */
+.matter-actions { display: flex; align-items: center; gap: 12px; margin: 12px 0 4px; flex-wrap: wrap; }
+.assignees { display: flex; align-items: center; gap: 5px; }
+.assignees-none { font-size: 12px; color: var(--text-faint); font-style: italic; }
+.avatar {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 50%; font-family: var(--font-mono);
+  font-size: 10px; font-weight: 600; color: #1a1813; flex-shrink: 0;
+}
+.avatar.sm { width: 20px; height: 20px; font-size: 8.5px; }
+.btn.sm { padding: 4px 10px; font-size: 12px; }
+.assign-wrap { position: relative; }
+.assign-menu {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 20; min-width: 240px;
+  background: var(--panel); border: 1px solid var(--border-gold); border-radius: var(--r);
+  box-shadow: var(--shadow); padding: 8px;
+}
+.assign-menu-head { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold); padding: 4px 6px 8px; }
+.assign-empty { font-size: 12px; color: var(--text-faint); padding: 4px 6px; font-style: italic; }
+.assign-row { display: flex; align-items: center; gap: 8px; padding: 6px; border-radius: var(--r-sm); cursor: pointer; }
+.assign-row:hover { background: rgba(236, 231, 218, 0.03); }
+.assign-row input { accent-color: var(--gold); }
+.assign-name { flex: 1; font-size: 13px; color: var(--text); }
+
+/* ─── Admin: lawyer roster ───────────────────────────────────────────── */
+.lawyer-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.lawyer-row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-sm); }
+.lawyer-name { flex: 1; font-size: 13px; color: var(--text); display: flex; flex-direction: column; }
+.lawyer-email { font-size: 11px; color: var(--text-faint); font-family: var(--font-mono); }
+.lawyer-add { display: grid; grid-template-columns: 1.3fr 1.6fr 0.9fr auto; gap: 8px; align-items: center; }
+.lawyer-add input, .lawyer-add select {
+  font-family: var(--font-sans); font-size: 13px; color: var(--text); background: var(--panel);
+  border: 1px solid var(--border-2); border-radius: var(--r-sm); padding: 8px 10px;
+}
+
 /* ─── Admin panel ────────────────────────────────────────────────────── */
 .modal.admin { max-width: 620px; }
 .modal.admin .modal-body { max-height: 62vh; overflow-y: auto; }

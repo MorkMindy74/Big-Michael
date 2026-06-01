@@ -1,11 +1,71 @@
 import { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import type { Task, RoundState } from "./types";
+import type { Task, RoundState, LawyerProfile } from "./types";
 import { PHASE_SEQUENCES } from "./types";
 import { StatusPill, WorkflowPill, ConfidenceBar, CitationChips } from "./primitives";
 import { FindingsTable } from "./FindingsTable";
 import { TabulateGrid } from "./TabulateGrid";
 import { Markdown } from "./Markdown";
+import { api } from "./api";
+
+function initials(name: string): string {
+  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("");
+}
+
+function MatterActions({ task, profiles, isPartner, onChange, onDeleted, notify }: {
+  task: Task; profiles: LawyerProfile[]; isPartner: boolean;
+  onChange: () => void; onDeleted: (id: string) => void; notify: (m: string) => void;
+}) {
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const assigned = task.assignedLawyerIds ?? [];
+  const assignedProfiles = profiles.filter((p) => assigned.includes(p.id));
+
+  async function toggle(id: string) {
+    const next = assigned.includes(id) ? assigned.filter((x) => x !== id) : [...assigned, id];
+    setBusy(true);
+    try { await api.assignLawyers(task.id, next); onChange(); }
+    catch (e) { notify((e as Error).message); } finally { setBusy(false); }
+  }
+
+  async function del() {
+    if (!window.confirm(`Delete this matter? This can't be undone.\n\n${task.description.slice(0, 120)}`)) return;
+    setBusy(true);
+    try { await api.deleteTask(task.id); notify("Matter deleted"); onDeleted(task.id); }
+    catch (e) { notify((e as Error).message); setBusy(false); }
+  }
+
+  return (
+    <div className="matter-actions">
+      <div className="assignees">
+        {assignedProfiles.length === 0 && <span className="assignees-none">Unassigned</span>}
+        {assignedProfiles.map((p) => (
+          <span key={p.id} className="avatar" style={{ background: p.color ?? "var(--gold-soft)" }} title={`${p.name} · ${p.role}`}>{initials(p.name)}</span>
+        ))}
+      </div>
+      {isPartner && (
+        <div className="assign-wrap">
+          <button className="btn ghost sm" disabled={busy} onClick={() => setAssignOpen((o) => !o)}>⚖ Assign ▾</button>
+          {assignOpen && (
+            <div className="assign-menu" onMouseLeave={() => setAssignOpen(false)}>
+              <div className="assign-menu-head">Assign lawyers</div>
+              {profiles.length === 0 && <div className="assign-empty">No lawyers yet — add them in Admin.</div>}
+              {profiles.map((p) => (
+                <label key={p.id} className="assign-row">
+                  <input type="checkbox" checked={assigned.includes(p.id)} disabled={busy} onChange={() => toggle(p.id)} />
+                  <span className="avatar sm" style={{ background: p.color ?? "var(--gold-soft)" }}>{initials(p.name)}</span>
+                  <span className="assign-name">{p.name}</span>
+                  {p.role === "partner" && <span className="pill sm gold">partner</span>}
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      <button className="btn reject sm" disabled={busy} onClick={del} title="Delete matter">✕ Delete</button>
+    </div>
+  );
+}
 
 type Tab = "findings" | "tabulate" | "synthesis" | "rounds";
 
@@ -154,10 +214,13 @@ function RoundsPanel({ task, agentNames }: { task: Task; agentNames: Map<string,
   );
 }
 
-export function TaskView({ task, agentNames, onChange, notify }: {
+export function TaskView({ task, agentNames, profiles, isPartner, onChange, onDeleted, notify }: {
   task: Task;
   agentNames: Map<string, string>;
+  profiles: LawyerProfile[];
+  isPartner: boolean;
   onChange: () => void;
+  onDeleted: (id: string) => void;
   notify: (msg: string) => void;
 }) {
   const hasTable = !!task.table || task.workflowType === "tabulate";
@@ -191,6 +254,7 @@ export function TaskView({ task, agentNames, onChange, notify }: {
         </div>
         <h1 className="task-title">{task.description}</h1>
         <div className="task-id">{task.id} · round {task.currentRound}/{task.maxRounds} · {task.findings.length} findings</div>
+        <MatterActions task={task} profiles={profiles} isPartner={isPartner} onChange={onChange} onDeleted={onDeleted} notify={notify} />
         <PhaseStepper task={task} />
       </div>
 

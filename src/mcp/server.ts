@@ -22,11 +22,14 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import Fastify from "fastify";
+import type { FastifyRequest } from "fastify";
+import cors from "@fastify/cors";
 import { Config } from "../config.js";
 import { logger } from "../logger.js";
 import { auditLogger } from "../audit/index.js";
 import { Orchestrator } from "../orchestrator.js";
-import type { WorkflowType } from "../types.js";
+import type { WorkflowType, SessionUser } from "../types.js";
+import { LOCAL_PARTNER, filterVisible, canViewTask, isPartner } from "../auth/index.js";
 
 // ─── Tool schemas ─────────────────────────────────────────────────────────────
 
@@ -233,6 +236,18 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
   // not be unbounded). x-powered-by/server header is off by default in Fastify.
   const app = Fastify({ logger: false, bodyLimit: 25 * 1024 * 1024 });
 
+  // CORS — restrict the browser origins allowed to call the API. Local Vite
+  // proxies same-origin so this mainly governs cross-origin/deployed UIs.
+  // credentials:true so session cookies ride along once OAuth is live.
+  await app.register(cors, { origin: Config.auth.allowedOrigins, credentials: true });
+
+  // Resolve the principal for a request. Auth OFF (local) → the LOCAL_PARTNER
+  // who sees everything. Auth ON → the session user set by the OAuth callback.
+  const getUser = (req: FastifyRequest): SessionUser | null => {
+    if (!Config.auth.enabled) return LOCAL_PARTNER;
+    return ((req as unknown as { session?: { user?: SessionUser } }).session?.user) ?? null;
+  };
+
   // Optional shared-secret auth. When API_KEY is set, every request except the
   // health check must present it as `x-api-key`. This is defence-in-depth for
   // anyone who runs the API off loopback; on 127.0.0.1 it can be left unset.
@@ -245,20 +260,55 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     });
   }
 
+  // When auth is enabled, require an authenticated principal on everything
+  // except health + the OAuth login/callback routes. (OAuth routes land next.)
+  if (Config.auth.enabled) {
+    app.addHook("onRequest", async (req, reply) => {
+      if (req.url === "/health" || req.url.startsWith("/auth/")) return;
+      if (!getUser(req)) return reply.code(401).send({ error: "Authentication required" });
+    });
+  }
+
   app.post("/tasks", async (req, reply) => {
     const body = req.body as {
       description: string; workflowType: WorkflowType; documentIds?: string[];
       clientNumber?: string; matterNumber?: string;
     };
     const task = await orchestrator.submitTask(body);
-    return reply.status(201).send(task);
+    // The creator is assigned to their own matter so they can see it under the
+    // access rule. Partners see everything regardless.
+    const user = getUser(req);
+    if (user) orchestrator.assignLawyers(task.id, [user.profileId]);
+    return reply.status(201).send(orchestrator.getTask(task.id) ?? task);
   });
 
-  app.get("/tasks", async () => orchestrator.listTasks());
+  // Only matters the principal may see (partner → all; lawyer → assigned only).
+  app.get("/tasks", async (req) => filterVisible(getUser(req), orchestrator.listTasks()));
 
   app.get("/tasks/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
     const task = orchestrator.getTask(id);
+    if (!task) return reply.status(404).send({ error: "Task not found" });
+    // Don't reveal existence of matters the principal can't see.
+    if (!canViewTask(getUser(req), task)) return reply.status(404).send({ error: "Task not found" });
+    return task;
+  });
+
+  // Delete a matter (must be visible to the principal).
+  app.delete("/tasks/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const task = orchestrator.getTask(id);
+    if (!task || !canViewTask(getUser(req), task)) return reply.status(404).send({ error: "Task not found" });
+    orchestrator.deleteTask(id);
+    return reply.status(200).send({ ok: true });
+  });
+
+  // Assign lawyer(s) to a matter — partner only (controls cross-lawyer sharing).
+  app.post("/tasks/:id/assign", async (req, reply) => {
+    if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
+    const { id } = req.params as { id: string };
+    const { lawyerIds } = req.body as { lawyerIds: string[] };
+    const task = orchestrator.assignLawyers(id, Array.isArray(lawyerIds) ? lawyerIds : []);
     if (!task) return reply.status(404).send({ error: "Task not found" });
     return task;
   });
@@ -364,6 +414,44 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
 
   // T18: Template REST routes
   app.get("/templates", async () => orchestrator.listTemplates());
+
+  // ── Identity + lawyer profiles ──────────────────────────────────────────────
+  app.get("/me", async (req) => {
+    const user = getUser(req);
+    return { user, authEnabled: Config.auth.enabled };
+  });
+
+  app.get("/profiles", async () => orchestrator.profiles.list());
+
+  app.post("/profiles", async (req, reply) => {
+    if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
+    try {
+      return reply.status(201).send(await orchestrator.profiles.create(req.body as { name: string; email: string; role?: string; title?: string; color?: string }));
+    } catch (err) {
+      return reply.status(400).send({ error: (err as Error).message });
+    }
+  });
+
+  app.patch("/profiles/:id", async (req, reply) => {
+    if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
+    const { id } = req.params as { id: string };
+    try {
+      return await orchestrator.profiles.update(id, req.body as Record<string, string>);
+    } catch (err) {
+      return reply.status(404).send({ error: (err as Error).message });
+    }
+  });
+
+  app.delete("/profiles/:id", async (req, reply) => {
+    if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
+    const { id } = req.params as { id: string };
+    try {
+      const ok = await orchestrator.profiles.remove(id);
+      return ok ? reply.status(200).send({ ok: true }) : reply.status(404).send({ error: "Profile not found" });
+    } catch (err) {
+      return reply.status(400).send({ error: (err as Error).message });
+    }
+  });
 
   // ── Admin settings (presentation mode, DyTopo depth, debate, DocuSeal) ──────
   app.get("/settings", async () => orchestrator.settings.get());

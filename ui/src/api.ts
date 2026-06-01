@@ -1,4 +1,4 @@
-import type { Task, Template, Health, WorkflowType, SearchResult, AuditEntry, DocumentRef, AgentSummary, AppSettings } from "./types";
+import type { Task, Template, Health, WorkflowType, SearchResult, AuditEntry, DocumentRef, AgentSummary, AppSettings, LawyerProfile, Me } from "./types";
 
 type SettingsPatch = {
   presentation?: Partial<AppSettings["presentation"]>;
@@ -36,6 +36,19 @@ export const api = {
 
   fromTemplate: (body: { templateId: string; substitutions?: Record<string, string>; documentIds?: string[]; clientNumber?: string; matterNumber?: string }) =>
     fetch("/tasks/from-template", POST(body)).then(json<Task>),
+
+  deleteTask: (id: string) =>
+    fetch(`/tasks/${id}`, { method: "DELETE" }).then((r) => json<{ ok: true }>(r)),
+
+  assignLawyers: (taskId: string, lawyerIds: string[]) =>
+    fetch(`/tasks/${taskId}/assign`, POST({ lawyerIds })).then(json<Task>),
+
+  me: () => fetch("/me").then(json<Me>),
+  listProfiles: () => fetch("/profiles").then(json<LawyerProfile[]>),
+  createProfile: (body: { name: string; email: string; role?: string; title?: string }) =>
+    fetch("/profiles", POST(body)).then(json<LawyerProfile>),
+  deleteProfile: (id: string) =>
+    fetch(`/profiles/${id}`, { method: "DELETE" }).then((r) => json<{ ok: true }>(r)),
 
   approveGate: (taskId: string, gateId: string, note?: string) =>
     fetch(`/tasks/${taskId}/gates/${gateId}/approve`, POST({ note })).then((r) => json<{ ok: true }>(r)),

@@ -110,6 +110,11 @@ export class AuditLogger {
     this.emitter.on("entry", listener);
     return () => this.emitter.off("entry", listener);
   }
+
+  /** Current number of active SSE subscribers (used by the server to enforce a cap). */
+  listenerCount(): number {
+    return this.emitter.listenerCount("entry");
+  }
 }
 
 export const auditLogger = new AuditLogger();

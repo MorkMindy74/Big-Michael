@@ -133,7 +133,8 @@ export class LavernAdapter implements AgentHarness {
 
   /**
    * Map Lavern MCP tool names to our internal tool identifiers.
-   * Lavern uses 21 MCP tools; we map to our equivalents or keep the name.
+   * Any tool name not in the explicit allowlist is dropped so a crafted
+   * Laverne config cannot grant arbitrary internal tools to an agent.
    */
   private mapTools(mcpTools: string[]): string[] {
     const toolMap: Record<string, string> = {
@@ -145,7 +146,14 @@ export class LavernAdapter implements AgentHarness {
       "mcp_draft":           "query_memory",
       "mcp_memory":          "query_memory",
     };
-    return mcpTools.map((t) => toolMap[t] ?? t);
+    const PERMITTED_TOOLS = new Set([
+      "web_search", "search_knowledge", "query_memory", "extract_from_document",
+      "translate", "citation_check", "list_documents", "read_document",
+      "fetch_documents", "find_in_document",
+    ]);
+    return mcpTools
+      .map((t) => toolMap[t] ?? t)
+      .filter((t) => PERMITTED_TOOLS.has(t));
   }
 }
 
@@ -234,7 +242,8 @@ export function sanitizePromptContent(s: string): string {
   return s
     .replace(/\bFINDING:/gi, "[FINDING:]")
     .replace(/\bEND_FINDING\b/gi, "[END_FINDING]")
-    .replace(/\bNO_FINDINGS\b/gi, "[NO_FINDINGS]");
+    .replace(/\bNO_FINDINGS\b/gi, "[NO_FINDINGS]")
+    .replace(/\bNO_CHALLENGE\b/gi, "[NO_CHALLENGE]");
 }
 
 // ─── Generic external agent format ───────────────────────────────────────────
@@ -256,6 +265,9 @@ export interface ExternalAgentConfig {
 }
 
 export function fromExternalConfig(c: ExternalAgentConfig): AgentDefinition {
+  if (![0, 1, 2, 3].includes(c.tier as number)) {
+    throw new Error(`Invalid tier ${JSON.stringify(c.tier)} for external agent '${c.id}' — must be 0, 1, 2, or 3`);
+  }
   return {
     id: c.id,
     name: c.name,

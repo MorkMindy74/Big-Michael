@@ -143,13 +143,27 @@ export class Orchestrator {
 
   // ─── Task management ──────────────────────────────────────────────────────
 
+  private static readonly MAX_CONCURRENT_TASKS = 10;
+  private static readonly MAX_DESCRIPTION_CHARS = 20_000;
+
   async submitTask(params: {
     description: string;
     workflowType: WorkflowType;
     documentIds?: string[];
     clientNumber?: string;
     matterNumber?: string;
+    createdByProfileId?: string;
   }): Promise<Task> {
+    if (params.description.length > Orchestrator.MAX_DESCRIPTION_CHARS) {
+      throw new Error(
+        `Task description exceeds the ${Orchestrator.MAX_DESCRIPTION_CHARS.toLocaleString()} character limit ` +
+        `(${params.description.length.toLocaleString()} received). Please shorten the description.`,
+      );
+    }
+    const running = Array.from(this.tasks.values()).filter((t) => t.status === "running").length;
+    if (running >= Orchestrator.MAX_CONCURRENT_TASKS) {
+      throw new Error(`Server at capacity: ${running} tasks already running. Please wait for one to complete.`);
+    }
     const phases = PHASE_SEQUENCES[params.workflowType];
     const task: Task = {
       id: uuidv4(),
@@ -157,6 +171,7 @@ export class Orchestrator {
       clientNumber: params.clientNumber?.trim() || undefined,
       matterNumber: params.matterNumber?.trim() || undefined,
       documentIds: params.documentIds ?? [],
+      createdByProfileId: params.createdByProfileId,
       workflowType: params.workflowType,
       status: "pending",
       currentPhase: phases[0],
@@ -194,11 +209,16 @@ export class Orchestrator {
     return Array.from(this.tasks.values());
   }
 
-  /** Delete a matter. Returns false if it didn't exist. */
+  /** Delete a matter and its Qdrant memory entries. Returns false if it didn't exist. */
   deleteTask(taskId: string): boolean {
     const existed = this.tasks.delete(taskId);
     if (existed) {
       this.persistTasks().catch((err) => logger.warn("Failed to persist tasks", { error: err.message }));
+      // Clean up orphaned inter-round memory vectors so deleted task data
+      // cannot be surfaced by future semantic memory queries.
+      this.memory.deleteByTaskId(taskId).catch((err) =>
+        logger.warn("Failed to delete task memory from Qdrant", { taskId, error: (err as Error).message }),
+      );
       auditLogger.write({ event: "task.deleted", taskId, data: {} });
       logger.info("Task deleted", { taskId });
     }
@@ -225,7 +245,7 @@ export class Orchestrator {
     templateId: string,
     substitutions: Record<string, string> = {},
     documentIds?: string[],
-    refs?: { clientNumber?: string; matterNumber?: string },
+    refs?: { clientNumber?: string; matterNumber?: string; createdByProfileId?: string },
   ): Promise<Task> {
     const template = this.templates.get(templateId);
     if (!template) throw new Error(`Template not found: ${templateId}`);

@@ -47,6 +47,10 @@ function getZipEntry(zip: JSZip, pathSlash: string) {
     return zip.file(pathSlash.replace(/\//g, "\\"));
 }
 
+function escapeXmlAttr(s: string): string {
+    return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 function setZipEntry(
     zip: JSZip,
     pathSlash: string,
@@ -446,7 +450,7 @@ function reconstructParagraph(
         newRunGroup.push(
             makeEl("w:del", inner, {
                 "w:id": wId,
-                "w:author": author,
+                "w:author": escapeXmlAttr(author),
                 "w:date": now,
             }),
         );
@@ -460,7 +464,7 @@ function reconstructParagraph(
         newRunGroup.push(
             makeEl("w:ins", [run], {
                 "w:id": wId,
-                "w:author": author,
+                "w:author": escapeXmlAttr(author),
                 "w:date": now,
             }),
         );

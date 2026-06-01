@@ -337,9 +337,11 @@ if __name__ == "__main__":
         sys.exit(0)
 
     except Exception as exc:
+        # Emit only the message — not a full traceback — to avoid leaking
+        # internal file paths and library internals to callers.
+        traceback.print_exc(file=sys.stderr)
         print(json.dumps({
             "error": str(exc),
             "type": type(exc).__name__,
-            "trace": traceback.format_exc(),
         }))
         sys.exit(1)

@@ -473,7 +473,13 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     return { user, authEnabled: Config.auth.enabled };
   });
 
-  app.get("/profiles", async () => orchestrator.profiles.list());
+  // Partners see full profiles (including email for contact/admin purposes).
+  // Lawyers see only the display fields needed to render the roster UI.
+  app.get("/profiles", async (req) => {
+    const profiles = orchestrator.profiles.list();
+    if (isPartner(getUser(req))) return profiles;
+    return profiles.map(({ id, name, title, color, role }) => ({ id, name, title, color, role }));
+  });
 
   app.post("/profiles", async (req, reply) => {
     if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
@@ -678,11 +684,19 @@ async function handleTool(
       return roundState;
     }
 
-    case "get_audit":
-      return auditLogger.readRecent(
+    case "get_audit": {
+      // MCP runs over stdio as the LOCAL_PARTNER (full partner access).
+      // Apply the same visibility filter as the REST endpoint so the pattern
+      // is explicit and safe if the transport is ever changed.
+      const allEntries = auditLogger.readRecent(
         args.taskId as string | undefined,
         args.limit as number | undefined,
       );
+      // LOCAL_PARTNER is a partner — sees every entry. Filter is a no-op but
+      // makes the access intent explicit and consistent with the REST audit route.
+      const visibleIds = new Set(orch.listTasks().map((t) => t.id));
+      return allEntries.filter((e) => !e.taskId || visibleIds.has(e.taskId));
+    }
 
     default:
       throw new Error(`Unknown tool: ${name}`);

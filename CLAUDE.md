@@ -179,22 +179,43 @@ Self-host: `docker compose -f docker-compose.prod.yml up -d` from the Infisical 
 ## REST API endpoints
 
 ```
-POST   /tasks                       submit task
-GET    /tasks                       list tasks
-GET    /tasks/:id                   get task
+POST   /tasks                       submit task (auto-assigned to creator)
+GET    /tasks                       list tasks (access-filtered)
+GET    /tasks/:id                   get task (403→404 if not permitted)
+DELETE /tasks/:id                   delete a matter
+POST   /tasks/:id/assign            assign lawyer(s)        [partner only]
 GET    /tasks/:id/stream            SSE live progress
 POST   /tasks/from-template         submit from template
 GET    /tasks/:taskId/rounds/:round get round state
 POST   /tasks/:taskId/gates/:gateId/approve
 POST   /tasks/:taskId/gates/:gateId/reject
-POST   /documents                   ingest document
-GET    /documents/search            semantic search
+POST   /documents                   ingest document (text)
+POST   /documents/upload            upload a PDF / text file → extract + ingest
+GET    /documents/search            semantic search (owner-scoped)
 GET    /agents                      list agents
 GET    /templates                   list templates
-GET    /audit                       query audit log (?taskId=&limit=)
-GET    /audit/stream                SSE live audit stream
+GET    /settings                    read admin settings
+PUT    /settings                    update admin settings (live)
+GET    /me                          current principal + authEnabled
+GET    /profiles                    lawyer roster
+POST   /profiles · PATCH/DELETE /profiles/:id   manage lawyers   [partner only]
+GET    /auth/providers              which OAuth providers are configured
+GET    /auth/:provider/login        start OAuth login (google|microsoft|linkedin)
+GET    /auth/:provider/callback     OAuth callback → session cookie
+POST   /auth/logout                 clear session
+GET    /audit                       query audit log (access-filtered)
+GET    /audit/stream                SSE live audit stream (access-filtered)
 GET    /health                      health check
 ```
+
+### Access control
+
+When `AUTH_ENABLED=true`, identity comes from OAuth (Google/Microsoft/LinkedIn)
+and every request carries a `SessionUser` from the signed session cookie. A
+**partner** sees all matters and manages assignment; a **lawyer** sees only
+matters assigned to them. Locally (`AUTH_ENABLED=false`) every request is a
+single local partner. See `src/auth/` and the README "Lawyers, roles & access
+control" section. Access rules are unit-tested (`npm test`).
 
 ## Known limitations
 

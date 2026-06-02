@@ -180,16 +180,26 @@ export class Agent {
           });
 
           let result: unknown;
-          try {
-            result = await refs.toolRegistry.execute(block.name, block.input, toolCtx);
-          } catch (err) {
-            result = { error: (err as Error).message };
+          // Enforce capability-based access: only tools in the agent's allowedTools
+          // list may be called, regardless of what the LLM requests.
+          if (!this.definition.allowedTools.includes(block.name)) {
+            result = { error: `Tool '${block.name}' is not permitted for this agent` };
+          } else {
+            try {
+              result = await refs.toolRegistry.execute(block.name, block.input, toolCtx);
+            } catch (err) {
+              result = { error: (err as Error).message };
+            }
           }
 
+          // Cap each tool result to 100 KB before inserting into the message
+          // history to prevent a large result from exhausting the context window.
+          const raw = JSON.stringify(result);
+          const content = raw.length > 100_000 ? raw.slice(0, 100_000) + "…[truncated]" : raw;
           toolResults.push({
             type: "tool_result",
             tool_use_id: block.id,
-            content: JSON.stringify(result),
+            content,
           });
         }
 

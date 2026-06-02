@@ -28,7 +28,7 @@ import cookie from "@fastify/cookie";
 import multipart from "@fastify/multipart";
 import { mkdir, writeFile, unlink } from "fs/promises";
 import { join, extname, basename } from "path";
-import { randomUUID } from "crypto";
+import { randomUUID, timingSafeEqual } from "crypto";
 import { extractTextFromPdf } from "../tools/pdf.js";
 import { Config } from "../config.js";
 import { logger } from "../logger.js";
@@ -278,7 +278,10 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
   if (Config.api.apiKey) {
     app.addHook("onRequest", async (req, reply) => {
       if (req.url === "/health") return;
-      if (req.headers["x-api-key"] !== Config.api.apiKey) {
+      // Constant-time comparison prevents timing side-channel key enumeration.
+      const provided = Buffer.from(String(req.headers["x-api-key"] ?? ""));
+      const expected = Buffer.from(Config.api.apiKey);
+      if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
         return reply.code(401).send({ error: "Unauthorized" });
       }
     });

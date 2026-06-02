@@ -168,8 +168,8 @@ export class Orchestrator {
     const task: Task = {
       id: uuidv4(),
       description: params.description,
-      clientNumber: params.clientNumber?.trim() || undefined,
-      matterNumber: params.matterNumber?.trim() || undefined,
+      clientNumber: params.clientNumber?.trim().slice(0, 100) || undefined,
+      matterNumber: params.matterNumber?.trim().slice(0, 100) || undefined,
       documentIds: params.documentIds ?? [],
       createdByProfileId: params.createdByProfileId,
       workflowType: params.workflowType,
@@ -229,7 +229,7 @@ export class Orchestrator {
   assignLawyers(taskId: string, lawyerIds: string[]): Task | null {
     const task = this.tasks.get(taskId);
     if (!task) return null;
-    const valid = [...new Set(lawyerIds)].filter((id) => this.profiles.get(id));
+    const valid = [...new Set(lawyerIds)].slice(0, 50).filter((id) => this.profiles.get(id));
     task.assignedLawyerIds = valid;
     task.updatedAt = new Date();
     this.persistTasks().catch((err) => logger.warn("Failed to persist tasks", { error: err.message }));

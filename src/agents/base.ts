@@ -307,7 +307,7 @@ MESSAGES ROUTED TO YOU THIS ROUND (from other agents whose offers matched your n
 ${incoming}
 
 ────────────────────────────────────────────────────────────────
-Produce your TOP findings (maximum 3, most important first):
+Produce your findings. For each distinct finding:
 
 FINDING:
 Content: <finding — state your conclusion or analysis clearly>
@@ -316,7 +316,6 @@ Confidence: <0.0–1.0>
 END_FINDING
 
 Rules:
-- Maximum 3 findings. Prioritise — drop anything speculative or duplicative.
 - Each finding must have at least one Citation.
 - Quote must be verbatim — not paraphrased.
 - Multiple Citations allowed per finding (repeat Citation: lines).

@@ -35,18 +35,11 @@ export const Config = {
     dimensions: parseInt(optional("EMBEDDING_DIMENSIONS", "1536")),
   },
 
-  // Vector DB — Qdrant in dev; swap QDRANT_URL for RuVector (https://github.com/ruvnet/RuVector)
-  // Set RUVECTOR_ENABLED=true when pointing at a RuVector host to enable GNN feedback.
+  // Vector DB — RuVector native in-process HNSW (no external service required).
+  // Three persistent stores are written to dataDir on first run and reloaded on restart.
   vectorDb: {
-    url: optional("QDRANT_URL", "http://localhost:6333"),
-    apiKey: process.env.QDRANT_API_KEY,
-    /** Enable RuVector-specific /api/feedback endpoint (GNN self-learning). */
-    ruVectorEnabled: optional("RUVECTOR_ENABLED", "false") === "true",
-    collections: {
-      agents: "fac_agents",
-      documents: "fac_documents",
-      memory: "fac_memory",
-    },
+    /** Directory for the three on-disk RuVector stores (agents / memory / knowledge). */
+    dataDir: optional("RUVECTOR_DATA_DIR", "./data"),
   },
 
   mcp: {

@@ -40,3 +40,6 @@ audit.jsonl
 .clients.json
 .time-entries.json
 .qtable.json
+
+# RuVector persistent stores (created on first run)
+data/

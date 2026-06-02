@@ -30,7 +30,8 @@ import { Config } from "../config.js";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { LearningEngine, createFastAgentDB } = require("ruvector") as {
   LearningEngine: new () => RuLearningEngine;
-  createFastAgentDB: (opts: { dimensions: number; maxAgents: number }) => Promise<RuFastAgentDB>;
+  // createFastAgentDB(dimensions?, maxEpisodes?) — synchronous
+  createFastAgentDB: (dimensions?: number, maxEpisodes?: number) => RuFastAgentDB;
 };
 
 // ─── RuVector type stubs ──────────────────────────────────────────────────────
@@ -101,7 +102,7 @@ export class AgentLearningLayer {
   }
 
   async init(): Promise<void> {
-    this.db = await createFastAgentDB({ dimensions: DIMS, maxAgents: 50_000 });
+    this.db = createFastAgentDB(DIMS, 50_000);
     await this.loadQTable();
     this.ready = true;
     logger.info("Agent Q-learning layer ready");

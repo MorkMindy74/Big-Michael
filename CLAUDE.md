@@ -1,7 +1,7 @@
 # Big Michael
 
 Multi-agent legal AI orchestration platform. Runs DyTopo rounds of granular
-epistemic/conceptual/writing agents over a Qdrant vector registry, with a
+epistemic/conceptual/writing agents over a RuVector native HNSW registry, with a
 debate + verification protocol on every finding before final synthesis.
 
 **Version 0.2.0** — full big-tent integration: Claude for Legal features, 8 legal
@@ -12,7 +12,7 @@ jurisdiction-aware agent routing.
 
 ```bash
 # 1. Start infrastructure
-docker compose up -d          # Qdrant (vector DB) + DocuSeal (e-signature)
+docker compose up -d          # DocuSeal (e-signature) — vector DB is in-process, no service needed
 
 # 2. Configure secrets
 cp .env.example .env
@@ -114,6 +114,7 @@ Each DyTopo round:
 | `src/dytopo/engine.ts` | Need/Offer matching, comm graph, round execution |
 | `src/dytopo/jurisdiction.ts` | `jurisdictionMatch()` — agent/task jurisdiction filter |
 | `src/agents/definitions.ts` | All 58 agent definitions |
+| `src/agents/registry.ts` | RuVector HNSW agent registry — semantic search, upsert, persist to `./data/agents.rvdb` |
 | `src/agents/base.ts` | Agent class — agentic loop, tool dispatch, prompt caching |
 | `src/protocols/index.ts` | CitationGate, DebateProtocol, VerificationPipeline |
 | `src/routing/model.ts` | Haiku/Sonnet/Opus/Ollama/Local routing; `shouldUseThinking()` |
@@ -135,8 +136,9 @@ Each DyTopo round:
 | `src/mcp/server.ts` | MCP stdio server + Fastify REST API |
 | `src/templates/*.json` | Task templates (due-diligence, dispute-resolution, etc.) |
 | `src/types.ts` | All types: AgentDefinition (jurisdictions), Task (jurisdiction), NosLegalTags |
+| `src/learning/index.ts` | RuVector Q-learning layer — LearningEngine + FastAgentDB for agent recruitment |
 | `scripts/pdf_tools.py` | Python PDF backend — called by tools/pdf.ts |
-| `docker-compose.yml` | Qdrant + DocuSeal for local dev |
+| `docker-compose.yml` | DocuSeal for local dev (no Qdrant — vector DB is in-process) |
 
 ## Model routing
 
@@ -408,8 +410,8 @@ Both results are stored in the Qdrant document payload (`practiceArea`, `detecte
 
 ## Known limitations
 
-- **Qdrant required**: all three stores (agent registry, memory, knowledge) require
-  Qdrant to be running. `docker compose up -d` before starting Big Michael.
+- **Vector storage**: all three stores (agent registry, memory, knowledge) use RuVector's native
+  in-process HNSW — no external service required. Data persists to `./data/` and reloads on restart.
 - **Python required**: PDF tools require Python 3.11+ and the packages in
   `requirements.txt`. Install with `pip install -r requirements.txt`.
 - **Tesseract required** for OCR: `apt install tesseract-ocr` or `brew install tesseract`.

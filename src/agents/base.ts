@@ -307,7 +307,7 @@ MESSAGES ROUTED TO YOU THIS ROUND (from other agents whose offers matched your n
 ${incoming}
 
 ────────────────────────────────────────────────────────────────
-Produce your findings. For each distinct finding:
+Produce your TOP findings (maximum 3, most important first):
 
 FINDING:
 Content: <finding — state your conclusion or analysis clearly>
@@ -316,6 +316,7 @@ Confidence: <0.0–1.0>
 END_FINDING
 
 Rules:
+- Maximum 3 findings. Prioritise — drop anything speculative or duplicative.
 - Each finding must have at least one Citation.
 - Quote must be verbatim — not paraphrased.
 - Multiple Citations allowed per finding (repeat Citation: lines).
@@ -339,7 +340,7 @@ function parseNeedOffer(
 function parseFindings(text: string, def: AgentDefinition): Finding[] {
   if (/NO_FINDINGS/i.test(text)) return [];
 
-  const blocks = text.split(/FINDING:/gi).slice(1);
+  const blocks = text.split(/FINDING:/gi).slice(1, 4); // hard cap: 3 findings per agent
   const findings: Finding[] = [];
 
   for (const block of blocks) {

@@ -158,6 +158,8 @@ export const Config = {
     profilesFile: optional("PROFILES_FILE", ".profiles.json"),
     clientsFile: optional("CLIENTS_FILE", ".clients.json"),
     timeFile: optional("TIME_FILE", ".time-entries.json"),
+    /** Persisted Q-table for agent recruitment learning (RuVector LearningEngine). */
+    learningFile: optional("LEARNING_FILE", ".qtable.json"),
   },
 
   logging: {

@@ -39,3 +39,4 @@ audit.jsonl
 .profiles.json
 .clients.json
 .time-entries.json
+.qtable.json

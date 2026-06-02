@@ -33,6 +33,7 @@ import { SettingsStore } from "./settings/index.js";
 import { ProfileStore } from "./auth/index.js";
 import { ClientStore } from "./clients/index.js";
 import { TimeStore } from "./time/index.js";
+import { agentLearning } from "./learning/index.js";
 import { DyTopoEngine } from "./dytopo/engine.js";
 import { InterRoundMemoryStore } from "./memory/index.js";
 import { KnowledgeStore } from "./knowledge/index.js";
@@ -116,6 +117,7 @@ export class Orchestrator {
     await this.profiles.init();
     await this.clients.init();
     await this.time.init();
+    await agentLearning.init();
     await Promise.all([
       this.registry.init(),
       this.memory.init(),
@@ -569,17 +571,41 @@ export class Orchestrator {
   private async recordAgentOutcomes(task: Task): Promise<void> {
     if (!task.findings.length) return;
 
-    const agentScores = new Map<string, number[]>();
+    // Group findings by (agentId, phase) so Q-learning gets per-phase rewards.
+    const agentPhaseScores = new Map<string, { phase: string; scores: number[] }>();
     for (const f of task.findings) {
-      if (!agentScores.has(f.agentId)) agentScores.set(f.agentId, []);
-      // Penalise challenged / unresolved findings heavily.
+      const key = `${f.agentId}::${f.round}`;
+      if (!agentPhaseScores.has(key)) {
+        // Find the phase for this round
+        const roundState = task.rounds.find((r) => r.findings.some((rf) => rf.id === f.id));
+        agentPhaseScores.set(key, { phase: roundState?.goal.phase ?? task.currentPhase, scores: [] });
+      }
       const effective = f.challenged && !f.resolved ? f.confidence * 0.3 : f.confidence;
-      agentScores.get(f.agentId)!.push(effective);
+      agentPhaseScores.get(key)!.scores.push(effective);
     }
 
-    for (const [agentId, scores] of agentScores) {
+    const phases = ["intake","research","analysis","drafting","review","verification","delivery"];
+    const done = true; // task is complete
+
+    for (const [key, { phase, scores }] of agentPhaseScores) {
+      const agentId = key.split("::")[0];
       const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+      const phaseIdx = phases.indexOf(phase);
+      const nextPhase = phases[phaseIdx + 1] ?? phase;
+
+      // Update Qdrant successScore (for recommend() in future tasks)
       await this.registry.recordOutcome([agentId], avg);
+
+      // Update RuVector Q-table (for per-phase agent ranking in future tasks)
+      await agentLearning.recordEpisode({
+        phase,
+        nextPhase,
+        jurisdiction: task.jurisdiction,
+        workflowType: task.workflowType,
+        agentId,
+        reward: avg,
+        done,
+      });
     }
   }
 

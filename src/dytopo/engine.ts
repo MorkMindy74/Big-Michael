@@ -32,6 +32,7 @@ import { globalToolRegistry } from "../tools/index.js";
 import { IntraRoundMemoryStore, InterRoundMemoryStore } from "../memory/index.js";
 import { getProvider, resolveModelId } from "../providers/index.js";
 import { selectModel } from "../routing/model.js";
+import { agentLearning } from "../learning/index.js";
 import type { KnowledgeStore } from "../knowledge/index.js";
 import type {
   AgentDefinition,
@@ -203,18 +204,30 @@ export class DyTopoEngine {
     const uniquePositive = [...new Set(positive)].slice(0, 8);
     const uniqueNegative = [...new Set(negative)].slice(0, 4);
 
-    if (uniquePositive.length) {
-      // Blend: recommend() surfaces agents proven on this task + semantic match.
-      return this.registry.recommend(goal.description, {
-        positive: uniquePositive,
-        negative: uniqueNegative,
-        ...tierOpt,
-        topK,
-      });
-    }
+    // Semantic search — always run to ensure broad, relevant candidate pool.
+    const candidates = uniquePositive.length
+      ? await this.registry.recommend(goal.description, {
+          positive: uniquePositive,
+          negative: uniqueNegative,
+          ...tierOpt,
+          topK,
+        })
+      : await this.registry.search(goal.description, { ...tierOpt, topK });
 
-    // First round or no prior signal — pure semantic search.
-    return this.registry.search(goal.description, { ...tierOpt, topK });
+    // Q-learning rerank — promotes agents with strong historical performance
+    // for this exact (phase, jurisdiction, workflowType) combination.
+    // The learning layer uses epsilon-greedy exploration so it keeps discovering
+    // new agents even as it exploits known good ones.
+    const rankedIds = agentLearning.rankCandidates(
+      goal.phase,
+      task.jurisdiction,
+      task.workflowType,
+      candidates.map((a) => a.id),
+    );
+
+    // Restore AgentDefinition objects in the new ranked order.
+    const byId = new Map(candidates.map((a) => [a.id, a]));
+    return rankedIds.map((id) => byId.get(id)!).filter(Boolean);
   }
 
   private async fetchAgentMemories(

@@ -100,19 +100,62 @@ export class DyTopoEngine {
       agents: activeDefinitions.map((a) => a.name),
     });
 
-    // ── Step 2: Retrieve inter-round memory ────────────────────────────────
+    // ── Step 2: Retrieve inter-round memory for each agent ─────────────────
     const agentMemories = await this.fetchAgentMemories(activeDefinitions, task, goal);
 
-    // ── Step 3 + 4 + 5 + 6: Two-wave DyTopo (graph owned inside processAgents) ──
-    const { findings: allFindings, edges, messages } =
-      await this.processAgents(activeAgents, agentMemories, intraMemory, task, goal);
+    // ── Step 3: Need/Offer descriptors ─────────────────────────────────────
+    const needsOffers = await Promise.all(
+      activeAgents.map((agent) =>
+        agent.generateNeedOffer({
+          roundGoal: goal,
+          incomingMessages: [],
+          memoryEntries: agentMemories.get(agent.definition.id) ?? [],
+          taskDescription: task.description,
+        }),
+      ),
+    );
+    const needs  = needsOffers.map((no) => no.need);
+    const offers = needsOffers.map((no) => no.offer);
+
+    // ── Step 4: Build sparse directed comm graph ────────────────────────────
+    const edges = await this.buildCommGraph(needs, offers, activeDefinitions);
+    logger.info("Communication graph built", {
+      round: goal.round,
+      edges: edges.length,
+      threshold: Config.dytopo.similarityThreshold,
+    });
+
+    // ── Step 5: Route messages along edges ─────────────────────────────────
+    const messages = this.routeMessages(edges, offers, goal.round);
+    for (const msg of messages) intraMemory.recordMessage(msg.to, msg);
+
+    // ── Step 6: Agents process — full agentic loops ─────────────────────────
+    const allFindings = (await Promise.all(
+      activeAgents.map((agent) =>
+        agent.process({
+          roundGoal: goal,
+          incomingMessages: intraMemory.getMessagesFor(agent.definition.id),
+          memoryEntries: agentMemories.get(agent.definition.id) ?? [],
+          taskDescription: task.description,
+          taskId: task.id,
+          toolRegistry: globalToolRegistry,
+          knowledge: this.knowledge,
+          memory: this.memory,
+          ownerId: task.createdByProfileId,
+        }),
+      ),
+    )).flat();
 
     for (const finding of allFindings) {
       finding.round = goal.round;
       intraMemory.recordFinding(finding.agentId, finding);
+      // Write to the intra-round whiteboard so persistRoundMemory can roll it up
+      intraMemory.addSharedContext(
+        `[${finding.agentName}] ${finding.content.replace(/\s+/g, " ").slice(0, 200)}`,
+      );
     }
 
-    // ── Step 7: Write round memory ─────────────────────────────────────────
+    // ── Step 7: Haiku rollup → inter-round memory ───────────────────────────
     await this.persistRoundMemory(task, goal, allFindings, intraMemory);
 
     const state: RoundState = {
@@ -271,138 +314,6 @@ export class DyTopoEngine {
       round,
       timestamp: new Date(),
     }));
-  }
-
-  /**
-   * Two-wave DyTopo intra-round processing.
-   *
-   * Wave 1 — independent analysis (no peer context):
-   *   a. Agents generate Need/Offer descriptors from the round goal alone.
-   *   b. Engine cosine-matches Needs → Offers → sparse directed comm graph.
-   *   c. Messages routed along graph edges.
-   *   d. Agents run full agentic loops with routed messages → Wave 1 findings.
-   *   e. All findings written to the intra-round whiteboard.
-   *
-   * Wave 2 — peer-informed refinement (full DyTopo re-run):
-   *   a. Agents regenerate Need/Offer descriptors, now conditioned on their
-   *      Wave 1 findings and the shared whiteboard → needs shift to gaps/disputes.
-   *   b. Engine rebuilds the comm graph from the updated descriptors.
-   *   c. Messages routed along the new Wave 2 graph.
-   *   d. Agents run full agentic loops with Wave 2 messages AND the whiteboard
-   *      injected → challenge, cross-check, fill gaps with full tool access.
-   *
-   * Both waves use the same model routing and token budget. The two-pass graph
-   * re-computation is what distinguishes this from a simple broadcast repeat.
-   */
-  private async processAgents(
-    agents: Agent[],
-    agentMemories: Map<string, import("../types.js").MemoryEntry[]>,
-    intraMemory: IntraRoundMemoryStore,
-    task: Task,
-    goal: RoundGoal,
-  ): Promise<{ findings: Finding[]; edges: CommunicationEdge[]; messages: AgentMessage[] }> {
-    // ── Wave 1a: Need/Offer generation (no peer context) ─────────────────────
-    const w1NeedsOffers = await Promise.all(
-      agents.map((agent) => {
-        const memoryEntries = agentMemories.get(agent.definition.id) ?? [];
-        return agent.generateNeedOffer({
-          roundGoal: goal,
-          incomingMessages: [],
-          memoryEntries,
-          taskDescription: task.description,
-        });
-      }),
-    );
-    const w1Needs  = w1NeedsOffers.map((no) => no.need);
-    const w1Offers = w1NeedsOffers.map((no) => no.offer);
-
-    // ── Wave 1b: build comm graph ─────────────────────────────────────────────
-    const w1Edges    = await this.buildCommGraph(w1Needs, w1Offers, agents.map((a) => a.definition));
-    const w1Messages = this.routeMessages(w1Edges, w1Offers, goal.round);
-    for (const msg of w1Messages) intraMemory.recordMessage(msg.to, msg);
-
-    logger.debug("Wave 1 comm graph built", { round: goal.round, edges: w1Edges.length });
-
-    // ── Wave 1c: full agentic loops ───────────────────────────────────────────
-    const wave1Findings = (await Promise.all(
-      agents.map((agent) => agent.process({
-        roundGoal: goal,
-        incomingMessages: intraMemory.getMessagesFor(agent.definition.id),
-        memoryEntries: agentMemories.get(agent.definition.id) ?? [],
-        taskDescription: task.description,
-        taskId: task.id,
-        toolRegistry: globalToolRegistry,
-        knowledge: this.knowledge,
-        memory: this.memory,
-        ownerId: task.createdByProfileId,
-      })),
-    )).flat();
-
-    // ── Whiteboard: publish Wave 1 findings to shared context ─────────────────
-    for (const f of wave1Findings) {
-      intraMemory.addSharedContext(
-        `[${f.agentName}] ${f.content.replace(/\s+/g, " ").slice(0, 200)}`,
-      );
-    }
-    const sharedContext = intraMemory.getSharedContext();
-
-    logger.debug("Intra-round whiteboard built", {
-      round: goal.round,
-      wave1Findings: wave1Findings.length,
-      contextEntries: sharedContext.length,
-    });
-
-    // ── Wave 2a: Need/Offer re-generation conditioned on whiteboard ───────────
-    // Agents now know what peers found; their needs shift toward gaps and disputes.
-    const w2NeedsOffers = await Promise.all(
-      agents.map((agent) => {
-        const memoryEntries = agentMemories.get(agent.definition.id) ?? [];
-        return agent.generateNeedOffer({
-          roundGoal: goal,
-          incomingMessages: [],
-          memoryEntries,
-          taskDescription: task.description,
-          sharedContext,        // ← updated agent state informs new descriptors
-        });
-      }),
-    );
-    const w2Needs  = w2NeedsOffers.map((no) => no.need);
-    const w2Offers = w2NeedsOffers.map((no) => no.offer);
-
-    // ── Wave 2b: rebuild comm graph from updated descriptors ──────────────────
-    const w2Edges    = await this.buildCommGraph(w2Needs, w2Offers, agents.map((a) => a.definition));
-    const w2Messages = this.routeMessages(w2Edges, w2Offers, goal.round);
-    // Record Wave 2 messages separately — they don't overwrite Wave 1 messages
-    const w2IntraMemory = new IntraRoundMemoryStore(`${intraMemory.snapshot().roundId}-w2`);
-    for (const msg of w2Messages) w2IntraMemory.recordMessage(msg.to, msg);
-
-    logger.debug("Wave 2 comm graph built", { round: goal.round, edges: w2Edges.length });
-
-    // ── Wave 2c: full agentic loops with Wave 2 graph + whiteboard ────────────
-    const wave2Findings = (await Promise.all(
-      agents.map((agent) => agent.process({
-        roundGoal: goal,
-        incomingMessages: w2IntraMemory.getMessagesFor(agent.definition.id),
-        memoryEntries: agentMemories.get(agent.definition.id) ?? [],
-        taskDescription: task.description,
-        taskId: task.id,
-        toolRegistry: globalToolRegistry,
-        knowledge: this.knowledge,
-        memory: this.memory,
-        ownerId: task.createdByProfileId,
-        sharedContext,          // ← whiteboard keeps full peer context visible
-      })),
-    )).flat();
-
-    logger.debug("Wave 2 findings produced", { round: goal.round, count: wave2Findings.length });
-
-    // Expose both waves' edges/messages for the RoundState; Wave 1 edges are the
-    // primary topology, Wave 2 edges capture the updated post-whiteboard graph.
-    return {
-      findings: [...wave1Findings, ...wave2Findings],
-      edges: [...w1Edges, ...w2Edges],
-      messages: [...w1Messages, ...w2Messages],
-    };
   }
 
   /**

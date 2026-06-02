@@ -86,15 +86,15 @@ T3  Tool agents (6)                  web search · retrieval · extraction · tr
 50 jurisdiction-neutral native agents — plus an imported Lavern roster (118 in all).
 ```
 
-**Each DyTopo round (two-wave processing):**
+**Each DyTopo round:**
 
 1. Every agent emits a Need/Offer descriptor (Haiku, ~10 tokens)
-2. The engine cosine-matches Needs → Offers to build a directed comm graph
-3. **Wave 1** — all agents run independent full agentic loops in parallel (no peer context → no anchoring bias)
-4. All Wave 1 findings are written to the **intra-round whiteboard** (shared context)
-5. **Wave 2** — all agents run a second full agentic loop with the whiteboard injected; agents challenge, cross-check, and extend peer findings using full tool access
-6. Combined Wave 1 + Wave 2 findings pass **CitationGate → Debate (Opus) → Verification (Haiku ×10)**
-7. Round digest synthesised by Haiku and written to the **inter-round memory store**
+2. The engine cosine-matches Needs → Offers to build a sparse directed comm graph
+3. Messages routed along graph edges to each agent
+4. Agents run full agentic loops with routed messages + inter-round memory → findings
+5. Findings written to the **intra-round whiteboard**
+6. Findings pass **CitationGate → Debate (Opus) → Verification (Haiku ×10)**
+7. Haiku synthesises the whiteboard into a round digest → written to **inter-round memory** for the next round
 7. Low-confidence / challenged findings escalate to a **human gate** before synthesis
 
 **Q-learning agent recruitment** (`src/learning/index.ts`):

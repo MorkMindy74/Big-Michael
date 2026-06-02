@@ -44,12 +44,6 @@ export interface AgentContext {
   memory?: InterRoundMemoryStore;
   /** Document owner scope — undefined means partner (see all), set for lawyer-submitted tasks */
   ownerId?: string;
-  /**
-   * Intra-round broadcast context — findings produced by all other agents in Wave 1,
-   * broadcast to every agent in Wave 2 so the whole round shares a single ground truth.
-   * Undefined in Wave 1 (agents haven't produced findings yet).
-   */
-  sharedContext?: string[];
 }
 
 export class Agent {
@@ -267,12 +261,6 @@ function buildNeedOfferPrompt(def: AgentDefinition, ctx: AgentContext): string {
     ? ctx.memoryEntries.map((e) => `[Round ${e.round}] ${sanitizePromptContent(e.content)}`).join("\n")
     : "None yet.";
 
-  const sharedLines = ctx.sharedContext?.length
-    ? `\nFINDINGS ALREADY ESTABLISHED THIS ROUND (do not re-request what is already known):\n${
-        ctx.sharedContext.map((s) => sanitizePromptContent(s)).join("\n")
-      }\n`
-    : "";
-
   return `TASK: ${taskDesc}
 
 CURRENT ROUND GOAL (Round ${ctx.roundGoal.round}, Phase: ${ctx.roundGoal.phase}):
@@ -282,7 +270,7 @@ YOUR ROLE: ${def.name} — ${def.description}
 
 RELEVANT MEMORY FROM PRIOR ROUNDS:
 ${memoryLines}
-${sharedLines}
+
 Output exactly:
 NEED: <one sentence — what information or expertise you currently need from other agents>
 OFFER: <one sentence — what you can contribute this round given your role>`;
@@ -304,11 +292,6 @@ function buildProcessingPrompt(def: AgentDefinition, ctx: AgentContext): string 
     ? ctx.memoryEntries.map((e) => `[Round ${e.round} — ${e.phase}] ${sanitizePromptContent(e.content)}`).join("\n")
     : "No prior memory.";
 
-  // Shared context from prior rounds (populated from the previous round's broadcast).
-  const shared = ctx.sharedContext?.length
-    ? ctx.sharedContext.map((s) => sanitizePromptContent(s)).join("\n")
-    : null;
-
   return `TASK: ${taskDesc}
 
 ROUND GOAL (Round ${ctx.roundGoal.round} — Phase: ${ctx.roundGoal.phase}):
@@ -319,7 +302,7 @@ ${ctx.roundGoal.expectedOutputs.map((o, i) => `${i + 1}. ${o}`).join("\n")}
 
 INTER-ROUND MEMORY (what has been established in prior rounds):
 ${memory}
-${shared ? `\nSHARED ROUND CONTEXT (broadcast from all agents this round — build on these, do not duplicate):\n${shared}\n` : ""}
+
 MESSAGES ROUTED TO YOU THIS ROUND (from other agents whose offers matched your needs):
 ${incoming}
 

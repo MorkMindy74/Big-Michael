@@ -107,7 +107,13 @@ export class InterRoundMemoryStore {
           scalar: { type: "int8", quantile: 0.99, always_ram: true },
         },
       });
-      logger.info("Memory collection created", { collection: COLLECTION });
+      await Promise.all([
+        this.qdrant.createPayloadIndex(COLLECTION, { field_name: "taskId",  field_schema: "keyword", wait: true }),
+        this.qdrant.createPayloadIndex(COLLECTION, { field_name: "round",   field_schema: "integer", wait: true }),
+        this.qdrant.createPayloadIndex(COLLECTION, { field_name: "phase",   field_schema: "keyword", wait: true }),
+        this.qdrant.createPayloadIndex(COLLECTION, { field_name: "agentId", field_schema: "keyword", wait: true }),
+      ]);
+      logger.info("Memory collection created with indexes", { collection: COLLECTION });
     }
     this.ready = true;
   }

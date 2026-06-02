@@ -545,11 +545,42 @@ export class Orchestrator {
       task.activeTimeEntryId = undefined;
     }
 
+    // Feed agent performance back into the registry so recommend()-based
+    // recruitment improves over time. High-confidence verified findings → positive
+    // signal; challenged/low-confidence ones → negative signal.
+    this.recordAgentOutcomes(task).catch((err) =>
+      logger.warn("Agent outcome recording failed", { error: (err as Error).message }),
+    );
+
     this.emit(task.id, "complete", { findings: task.findings.length, output: task.output?.slice(0, 200) });
     auditLogger.write({ event: "task.complete", taskId: task.id, data: { findings: task.findings.length } });
     this.persistTasks().catch((err) => logger.warn("Failed to persist tasks", { error: err.message }));
 
     logger.info("Task complete", { taskId: task.id, findings: task.findings.length });
+  }
+
+  /**
+   * Feed task outcomes back into the agent registry's performance scores.
+   * Agents whose findings were verified and not challenged → high signal.
+   * Agents whose findings were challenged, rejected, or very low confidence → low signal.
+   * The registry writes these as `successScore` payload fields so future
+   * recommend()-based recruitment can blend semantic match with proven performance.
+   */
+  private async recordAgentOutcomes(task: Task): Promise<void> {
+    if (!task.findings.length) return;
+
+    const agentScores = new Map<string, number[]>();
+    for (const f of task.findings) {
+      if (!agentScores.has(f.agentId)) agentScores.set(f.agentId, []);
+      // Penalise challenged / unresolved findings heavily.
+      const effective = f.challenged && !f.resolved ? f.confidence * 0.3 : f.confidence;
+      agentScores.get(f.agentId)!.push(effective);
+    }
+
+    for (const [agentId, scores] of agentScores) {
+      const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+      await this.registry.recordOutcome([agentId], avg);
+    }
   }
 
   private async runPhase(task: Task, phase: TaskPhase): Promise<void> {

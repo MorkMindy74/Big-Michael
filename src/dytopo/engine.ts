@@ -85,7 +85,7 @@ export class DyTopoEngine {
     });
 
     // ── Step 1: Recruit agents from registry via semantic search on the round goal ──
-    const recruitedAgents = await this.recruitAgents(goal, task.id);
+    const recruitedAgents = await this.recruitAgents(goal, task);
 
     // Merge pinned + recruited, deduplicate
     const agentMap = new Map<string, AgentDefinition>();
@@ -174,7 +174,7 @@ export class DyTopoEngine {
 
   // ─── Private helpers ────────────────────────────────────────────────────────
 
-  private async recruitAgents(goal: RoundGoal, taskId: string): Promise<AgentDefinition[]> {
+  private async recruitAgents(goal: RoundGoal, task: Task): Promise<AgentDefinition[]> {
     const phaseQueries: Record<string, { tier?: 1 | 2 | 3 }> = {
       intake: { tier: 1 },
       research: { tier: 2 },
@@ -184,11 +184,37 @@ export class DyTopoEngine {
       verification: { tier: 2 },
       delivery: { tier: 1 },
     };
-    const opts = phaseQueries[goal.phase] ?? {};
-    return this.registry.search(goal.description, {
-      ...opts,
-      topK: Config.dytopo.maxAgentsPerRound - 1,
-    });
+    const tierOpt = phaseQueries[goal.phase] ?? {};
+    const topK = Config.dytopo.maxAgentsPerRound - 1;
+
+    // From prior rounds in this task, collect agents whose findings were not
+    // challenged (positive) and agents whose findings were challenged (negative).
+    // Use these to bias recruitment toward historically effective agents.
+    const positive: string[] = [];
+    const negative: string[] = [];
+    for (const round of task.rounds) {
+      for (const f of round.findings) {
+        if (f.challenged) negative.push(f.agentId);
+        else positive.push(f.agentId);
+      }
+    }
+
+    // Deduplicate and cap to avoid blowing out the recommend() request.
+    const uniquePositive = [...new Set(positive)].slice(0, 8);
+    const uniqueNegative = [...new Set(negative)].slice(0, 4);
+
+    if (uniquePositive.length) {
+      // Blend: recommend() surfaces agents proven on this task + semantic match.
+      return this.registry.recommend(goal.description, {
+        positive: uniquePositive,
+        negative: uniqueNegative,
+        ...tierOpt,
+        topK,
+      });
+    }
+
+    // First round or no prior signal — pure semantic search.
+    return this.registry.search(goal.description, { ...tierOpt, topK });
   }
 
   private async fetchAgentMemories(

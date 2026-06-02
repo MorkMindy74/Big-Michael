@@ -39,13 +39,18 @@ export class AgentRegistry {
     if (!exists) {
       await this.qdrant.createCollection(COLLECTION, {
         vectors: { size: DIMS, distance: "Cosine" },
-        // Scalar quantization: compress float32 → int8 (4× memory reduction,
-        // negligible recall loss). Works transparently with RuVector and Qdrant.
         quantization_config: {
           scalar: { type: "int8", quantile: 0.99, always_ram: true },
         },
       });
-      logger.info("Agent registry collection created", { collection: COLLECTION });
+      // Payload indexes — allow fast filtered searches without full-collection scans.
+      // These are idempotent: safe to create even if the collection already exists.
+      await Promise.all([
+        this.qdrant.createPayloadIndex(COLLECTION, { field_name: "tier",         field_schema: "integer", wait: true }),
+        this.qdrant.createPayloadIndex(COLLECTION, { field_name: "domain",       field_schema: "keyword", wait: true }),
+        this.qdrant.createPayloadIndex(COLLECTION, { field_name: "jurisdictions", field_schema: "keyword", wait: true }),
+      ]);
+      logger.info("Agent registry collection created with indexes", { collection: COLLECTION });
     }
     this.ready = true;
   }
@@ -117,6 +122,84 @@ export class AgentRegistry {
     });
 
     return results.map((r) => this.toDefinition(r.payload as Record<string, unknown>));
+  }
+
+  /**
+   * Recommendation-based recruitment: blends semantic similarity with learned
+   * agent performance. Pass point IDs of agents that performed well on similar
+   * prior tasks (positive) and agents that underperformed (negative).
+   *
+   * Falls back to pure semantic search if positive examples are empty.
+   * Used by DyTopo to improve recruitment quality over time.
+   */
+  async recommend(
+    query: string,
+    opts: {
+      positive: string[];      // agentIds of high-performing agents from similar tasks
+      negative?: string[];     // agentIds of low-performing agents (optional)
+      tier?: AgentTier;
+      topK?: number;
+    },
+  ): Promise<AgentDefinition[]> {
+    this.assertReady();
+    if (!opts.positive.length) return this.search(query, { tier: opts.tier, topK: opts.topK });
+
+    const filter: Record<string, unknown> = {};
+    const must: unknown[] = [];
+    if (opts.tier !== undefined) must.push({ key: "tier", match: { value: opts.tier } });
+    if (must.length) filter.must = must;
+
+    const results = await this.qdrant.recommend(COLLECTION, {
+      positive: opts.positive.map((id) => this.toPointId(id)),
+      negative: (opts.negative ?? []).map((id) => this.toPointId(id)),
+      limit: opts.topK ?? 10,
+      filter: must.length ? filter : undefined,
+      with_payload: true,
+      strategy: "average_vector",
+    });
+    return results.map((r) => this.toDefinition(r.payload as Record<string, unknown>));
+  }
+
+  /**
+   * Record agent task outcome for future recommend()-based recruitment.
+   * Call after task completion — pass agent IDs from the round and the round's
+   * average finding confidence. High confidence → positive example; low → negative.
+   */
+  async recordOutcome(agentIds: string[], avgConfidence: number): Promise<void> {
+    this.assertReady();
+    // Confidence ≥ 0.75 = strong signal; < 0.45 = weak signal.
+    // We store a `successScore` payload field on each point that recommend()
+    // can use as a ranking signal in future calls.
+    const score = Math.max(0, Math.min(1, avgConfidence));
+    const updates = agentIds.map((id) =>
+      this.qdrant.setPayload(COLLECTION, {
+        payload: { successScore: score },
+        points: [this.toPointId(id)],
+        wait: false,
+      }),
+    );
+    await Promise.allSettled(updates);
+    logger.debug("Agent outcome recorded", { count: agentIds.length, avgConfidence });
+
+    // RuVector GNN feedback — only called when the endpoint is a RuVector host.
+    // RuVector exposes /api/feedback with a quality_score field that flows into
+    // the GNN self-learning layer without requiring reindexing.
+    if (Config.vectorDb.ruVectorEnabled) {
+      await this.sendRuVectorFeedback(score).catch((err) =>
+        logger.warn("RuVector feedback failed", { error: (err as Error).message }),
+      );
+    }
+  }
+
+  private async sendRuVectorFeedback(qualityScore: number): Promise<void> {
+    const base = Config.vectorDb.url.replace(/\/$/, "");
+    const res = await fetch(`${base}/api/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(Config.vectorDb.apiKey ? { Authorization: `Bearer ${Config.vectorDb.apiKey}` } : {}) },
+      body: JSON.stringify({ collection: COLLECTION, quality_score: qualityScore }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) throw new Error(`RuVector feedback HTTP ${res.status}`);
   }
 
   async getById(id: string): Promise<AgentDefinition | null> {

@@ -37,7 +37,13 @@ export class KnowledgeStore {
           scalar: { type: "int8", quantile: 0.99, always_ram: true },
         },
       });
-      logger.info("Knowledge store collection created", { collection: COLLECTION });
+      await Promise.all([
+        this.qdrant.createPayloadIndex(COLLECTION, { field_name: "ownerId",      field_schema: "keyword", wait: true }),
+        this.qdrant.createPayloadIndex(COLLECTION, { field_name: "jurisdiction",  field_schema: "keyword", wait: true }),
+        this.qdrant.createPayloadIndex(COLLECTION, { field_name: "practiceArea",  field_schema: "keyword", wait: true }),
+        this.qdrant.createPayloadIndex(COLLECTION, { field_name: "documentType",  field_schema: "keyword", wait: true }),
+      ]);
+      logger.info("Knowledge store collection created with indexes", { collection: COLLECTION });
     }
     this.ready = true;
   }

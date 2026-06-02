@@ -732,7 +732,9 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     const { taskId, limit } = req.query as Record<string, string>;
     const visible = auditVisible(req);
     const limitNum = limit ? parseInt(limit, 10) : undefined;
-    return auditLogger.readRecent(taskId, limitNum && Number.isInteger(limitNum) && limitNum > 0 ? limitNum : undefined).filter(visible);
+    const cappedLimit = limitNum && Number.isInteger(limitNum) && limitNum > 0
+      ? Math.min(limitNum, 1000) : undefined;
+    return auditLogger.readRecent(taskId, cappedLimit).filter(visible);
   });
 
   // Live audit SSE stream

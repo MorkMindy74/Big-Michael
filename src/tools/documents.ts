@@ -20,7 +20,7 @@
  * docxTrackedChanges engine so generated documents can be redlined in place.
  */
 
-import { readFile, writeFile, mkdir, access } from "fs/promises";
+import { readFile, writeFile, mkdir, realpath } from "fs/promises";
 import { isAbsolute, join, dirname, basename, extname, resolve, sep } from "path";
 import { Config } from "../config.js";
 import { logger } from "../logger.js";
@@ -34,29 +34,29 @@ import type { ToolImpl, ToolContext } from "./index.js";
 // elsewhere on the filesystem.
 const DOCX_ROOT = resolve(Config.pdf.outputDir);
 
-async function exists(p: string): Promise<boolean> {
-  try {
-    await access(p);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Resolve a user-supplied path to a .docx, confined to the output directory. */
+/** Resolve a user-supplied path to a .docx, confined to the output directory.
+ *  Uses realpath() to follow symlinks before the boundary check so a symlink
+ *  inside DOCX_ROOT pointing outside it cannot escape the sandbox. */
 async function resolveDocxPath(p: string): Promise<string | null> {
   if (!p) return null;
   // Always resolve relative to the output dir; absolute paths are re-anchored
   // there too so agents cannot escape to arbitrary filesystem locations.
   const base = isAbsolute(p) ? basename(p) : p;
-  const candidates = [join(DOCX_ROOT, base)];
-  for (const c of candidates) {
-    const abs = resolve(c);
-    if (!abs.startsWith(DOCX_ROOT + sep) && abs !== DOCX_ROOT) continue;
-    if (await exists(abs)) return abs;
+  const candidate = resolve(join(DOCX_ROOT, base));
+  let real: string;
+  try {
+    // realpath() follows all symlinks — the check below then operates on the
+    // true on-disk path, defeating symlink-based escapes.
+    real = await realpath(candidate);
+  } catch {
+    logger.warn("Blocked docx path (not found or not accessible)", { requested: p });
+    return null;
   }
-  logger.warn("Blocked docx path outside output dir", { requested: p });
-  return null;
+  if (!real.startsWith(DOCX_ROOT + sep) && real !== DOCX_ROOT) {
+    logger.warn("Blocked docx symlink outside output dir", { requested: p, resolved: real });
+    return null;
+  }
+  return real;
 }
 
 // ─── find_in_document matcher (ported verbatim from Mike) ───────────────────

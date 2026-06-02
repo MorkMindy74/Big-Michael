@@ -155,6 +155,7 @@ export class Agent {
         system: this.definition.systemPrompt,
         tools: toolSchemas,
         messages,
+        cacheSystem: true,
       });
 
       // Capture the latest text block as the candidate final response
@@ -229,6 +230,7 @@ export class Agent {
       maxTokens,
       system: this.definition.systemPrompt,
       messages: [{ role: "user", content: userMessage }],
+      cacheSystem: true,
     });
     const textBlock = response.content.find((b) => b.type === "text");
     if (!textBlock || textBlock.type !== "text") {

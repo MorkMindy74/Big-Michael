@@ -24,7 +24,7 @@ import { v4 as uuidv4 } from "uuid";
 import { Config } from "./config.js";
 import { logger } from "./logger.js";
 import { getProvider, resolveModelId } from "./providers/index.js";
-import { selectModel } from "./routing/model.js";
+import { selectModel, shouldUseThinking } from "./routing/model.js";
 import { auditLogger } from "./audit/index.js";
 import { AgentRegistry } from "./agents/registry.js";
 import { Agent } from "./agents/base.js";
@@ -494,6 +494,7 @@ EXPECTED_OUTPUT_3: <third expected output>`;
       maxTokens: 600,
       system: ROOT_ORCHESTRATOR.systemPrompt,
       messages: [{ role: "user", content: prompt }],
+      cacheSystem: true,
     });
 
     const textBlock = response.content.find((b) => b.type === "text");
@@ -528,12 +529,16 @@ Produce the final legal output for this task. Structure appropriately for the wo
 Every claim must trace to a specific finding number from the list above.`;
 
     const model = selectModel({ tier: 0, taskType: "synthesis" });
+    const useThinking = shouldUseThinking({ modelId: model, taskType: "synthesis", tier: 0 });
     const provider = getProvider(model);
     const response = await provider.chat({
       model: resolveModelId(model),
-      maxTokens: 4000,
+      // When thinking is on, budget_tokens + output tokens must fit within max_tokens.
+      maxTokens: useThinking ? 16_000 : 4000,
       system: ROOT_ORCHESTRATOR.systemPrompt,
       messages: [{ role: "user", content: prompt }],
+      cacheSystem: true,
+      ...(useThinking && { thinking: { budgetTokens: Config.anthropic.thinkingBudgetTokens } }),
     });
 
     const textBlock = response.content.find((b) => b.type === "text");
@@ -588,6 +593,7 @@ Rules:
       maxTokens: 4000,
       system: ROOT_ORCHESTRATOR.systemPrompt,
       messages: [{ role: "user", content: prompt }],
+      cacheSystem: true,
     });
 
     const textBlock = response.content.find((b) => b.type === "text");

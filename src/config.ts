@@ -21,6 +21,11 @@ export const Config = {
   anthropic: {
     apiKey: require("ANTHROPIC_API_KEY"),
     model: optional("ANTHROPIC_MODEL", "claude-opus-4-8"),
+    // Optional: point at a custom Anthropic-compatible endpoint (enterprise routing, proxies).
+    baseUrl: process.env.ANTHROPIC_BASE_URL ?? "",
+    // Token budget for extended thinking on synthesis/debate Opus calls.
+    // Must be < maxTokens on those calls (synthesis uses 16 000 total).
+    thinkingBudgetTokens: parseInt(optional("THINKING_BUDGET_TOKENS", "10000")),
   },
 
   embeddings: {

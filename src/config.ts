@@ -63,8 +63,13 @@ export const Config = {
     enabled: optional("AUTH_ENABLED", "false") === "true",
     sessionSecret: (() => {
       const secret = optional("SESSION_SECRET", "dev-insecure-change-me-in-production-please");
-      if (optional("AUTH_ENABLED", "false") === "true" && secret === "dev-insecure-change-me-in-production-please") {
-        throw new Error("SESSION_SECRET must be set to a strong random value when AUTH_ENABLED=true");
+      if (optional("AUTH_ENABLED", "false") === "true") {
+        if (secret === "dev-insecure-change-me-in-production-please") {
+          throw new Error("SESSION_SECRET must be set to a strong random value when AUTH_ENABLED=true");
+        }
+        if (secret.length < 32) {
+          throw new Error("SESSION_SECRET must be at least 32 characters when AUTH_ENABLED=true");
+        }
       }
       return secret;
     })(),

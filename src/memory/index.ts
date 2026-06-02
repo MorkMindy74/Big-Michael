@@ -166,7 +166,7 @@ export class InterRoundMemoryStore {
 
     const results = await this.qdrant.search(COLLECTION, {
       vector: embedding,
-      limit: opts.topK ?? 8,
+      limit: Math.min(opts.topK ?? 8, 100),
       filter: { must },
       with_payload: true,
     });

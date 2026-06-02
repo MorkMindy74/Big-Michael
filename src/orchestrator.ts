@@ -18,7 +18,7 @@
  */
 
 import { EventEmitter } from "events";
-import { readdir, readFile, writeFile } from "fs/promises";
+import { readdir, readFile, writeFile, rename } from "fs/promises";
 import { join, extname } from "path";
 import { v4 as uuidv4 } from "uuid";
 import { Config } from "./config.js";
@@ -165,11 +165,14 @@ export class Orchestrator {
       throw new Error(`Server at capacity: ${running} tasks already running. Please wait for one to complete.`);
     }
     const phases = PHASE_SEQUENCES[params.workflowType];
+    if (!phases) {
+      throw new Error(`Unknown workflowType '${params.workflowType}'. Valid values: ${Object.keys(PHASE_SEQUENCES).join(", ")}`);
+    }
     const task: Task = {
       id: uuidv4(),
       description: params.description,
-      clientNumber: params.clientNumber?.trim() || undefined,
-      matterNumber: params.matterNumber?.trim() || undefined,
+      clientNumber: params.clientNumber?.trim().slice(0, 100) || undefined,
+      matterNumber: params.matterNumber?.trim().slice(0, 100) || undefined,
       documentIds: params.documentIds ?? [],
       createdByProfileId: params.createdByProfileId,
       workflowType: params.workflowType,
@@ -229,7 +232,7 @@ export class Orchestrator {
   assignLawyers(taskId: string, lawyerIds: string[]): Task | null {
     const task = this.tasks.get(taskId);
     if (!task) return null;
-    const valid = [...new Set(lawyerIds)].filter((id) => this.profiles.get(id));
+    const valid = [...new Set(lawyerIds)].slice(0, 50).filter((id) => this.profiles.get(id));
     task.assignedLawyerIds = valid;
     task.updatedAt = new Date();
     this.persistTasks().catch((err) => logger.warn("Failed to persist tasks", { error: err.message }));
@@ -508,10 +511,13 @@ EXPECTED_OUTPUT_3: <third expected output>`;
   }
 
   private async synthesise(task: Task): Promise<string> {
+    // Cap each finding and the total to prevent synthesis prompts from exceeding
+    // practical context-window limits when many rounds produce large findings.
     const findingsSummary = task.findings
       .filter((f) => !task.pendingGates.some((g) => g.findingId === f.id && g.status === "rejected"))
-      .map((f, i) => `[${i + 1}] (${f.agentName}, Round ${f.round}) ${f.content}`)
-      .join("\n\n");
+      .map((f, i) => `[${i + 1}] (${f.agentName}, Round ${f.round}) ${f.content.slice(0, 5_000)}`)
+      .join("\n\n")
+      .slice(0, 200_000);
 
     const prompt = `TASK: ${task.description}
 
@@ -678,7 +684,9 @@ Rules:
       updatedAt: t.updatedAt.toISOString(),
       completedAt: t.completedAt?.toISOString(),
     }));
-    await writeFile(path, JSON.stringify(serialisable, null, 2), "utf8");
+    const tmp = `${path}.tmp`;
+    await writeFile(tmp, JSON.stringify(serialisable, null, 2), "utf8");
+    await rename(tmp, path);
     logger.debug("Tasks persisted", { count: this.tasks.size, path });
   }
 
@@ -694,6 +702,12 @@ Rules:
     try {
       const items = JSON.parse(raw) as Array<Record<string, unknown>>;
       for (const item of items) {
+        // Validate workflowType before restoring — a tampered or corrupted file
+        // could produce an invalid type that crashes phase execution at runTask().
+        if (!PHASE_SEQUENCES[item.workflowType as WorkflowType]) {
+          logger.warn("Skipping restored task with unknown workflowType", { id: item.id, workflowType: item.workflowType });
+          continue;
+        }
         const task = {
           ...item,
           createdAt: new Date(item.createdAt as string),

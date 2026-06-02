@@ -28,7 +28,7 @@ import cookie from "@fastify/cookie";
 import multipart from "@fastify/multipart";
 import { mkdir, writeFile, unlink } from "fs/promises";
 import { join, extname, basename } from "path";
-import { randomUUID } from "crypto";
+import { randomUUID, timingSafeEqual } from "crypto";
 import { extractTextFromPdf } from "../tools/pdf.js";
 import { Config } from "../config.js";
 import { logger } from "../logger.js";
@@ -250,6 +250,19 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
   await app.register(cors, { origin: Config.auth.allowedOrigins, credentials: true });
   await app.register(cookie, { secret: Config.auth.sessionSecret });
   await app.register(multipart, { limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
+
+  // Security headers on every response — API only (no HTML), so CSP is strict.
+  app.addHook("onSend", (_req, reply, _payload, done) => {
+    reply.header("X-Content-Type-Options", "nosniff");
+    reply.header("X-Frame-Options", "DENY");
+    reply.header("Referrer-Policy", "strict-origin-when-cross-origin");
+    reply.header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'");
+    if (Config.auth.baseUrl.startsWith("https://")) {
+      reply.header("Strict-Transport-Security", "max-age=63072000; includeSubDomains");
+    }
+    done();
+  });
+
   registerAuthRoutes(app, orchestrator);
 
   // Resolve the principal for a request. Auth OFF (local) → the LOCAL_PARTNER
@@ -265,7 +278,10 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
   if (Config.api.apiKey) {
     app.addHook("onRequest", async (req, reply) => {
       if (req.url === "/health") return;
-      if (req.headers["x-api-key"] !== Config.api.apiKey) {
+      // Constant-time comparison prevents timing side-channel key enumeration.
+      const provided = Buffer.from(String(req.headers["x-api-key"] ?? ""));
+      const expected = Buffer.from(Config.api.apiKey);
+      if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
         return reply.code(401).send({ error: "Unauthorized" });
       }
     });
@@ -285,6 +301,10 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
       description: string; workflowType: WorkflowType; documentIds?: string[];
       clientNumber?: string; matterNumber?: string;
     };
+    // Cap documentIds to 100 entries to prevent memory exhaustion from massive arrays.
+    if (Array.isArray(body.documentIds) && body.documentIds.length > 100) {
+      return reply.status(400).send({ error: "documentIds exceeds the limit of 100 entries" });
+    }
     const user = getUser(req);
     // Partners see all documents; lawyers are scoped to their own documents in agent tools.
     const createdByProfileId = isPartner(user) ? undefined : user?.profileId;
@@ -296,7 +316,8 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
   });
 
   // Only matters the principal may see (partner → all; lawyer → assigned only).
-  app.get("/tasks", async (req) => filterVisible(getUser(req), orchestrator.listTasks()));
+  // Capped at 500 to prevent a single response from dumping the full task list.
+  app.get("/tasks", async (req) => filterVisible(getUser(req), orchestrator.listTasks()).slice(0, 500));
 
   app.get("/tasks/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
@@ -452,7 +473,7 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     const { query, topK, jurisdiction, documentType } = req.query as Record<string, string>;
     const topKNum = topK ? parseInt(topK, 10) : undefined;
     return orchestrator.knowledge.search(query, {
-      topK: topKNum && Number.isInteger(topKNum) && topKNum > 0 ? topKNum : undefined,
+      topK: topKNum && Number.isInteger(topKNum) && topKNum > 0 ? Math.min(topKNum, 50) : undefined,
       jurisdiction,
       documentType,
       ownerId: docOwnerScope(req),
@@ -639,8 +660,10 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
 
   app.post("/clients/check-conflict", async (req, reply) => {
     if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
-    const { name } = req.body as { name: string };
-    return orchestrator.clients.checkConflict(name);
+    const { name } = req.body as { name?: string };
+    const trimmed = (typeof name === "string" ? name : "").trim().slice(0, 500);
+    if (!trimmed) return reply.status(400).send({ error: "name is required" });
+    return orchestrator.clients.checkConflict(trimmed);
   });
 
   // ── Admin settings (presentation mode, DyTopo depth, debate, DocuSeal) ──────
@@ -717,7 +740,9 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     const { taskId, limit } = req.query as Record<string, string>;
     const visible = auditVisible(req);
     const limitNum = limit ? parseInt(limit, 10) : undefined;
-    return auditLogger.readRecent(taskId, limitNum && Number.isInteger(limitNum) && limitNum > 0 ? limitNum : undefined).filter(visible);
+    const cappedLimit = limitNum && Number.isInteger(limitNum) && limitNum > 0
+      ? Math.min(limitNum, 1000) : undefined;
+    return auditLogger.readRecent(taskId, cappedLimit).filter(visible);
   });
 
   // Live audit SSE stream

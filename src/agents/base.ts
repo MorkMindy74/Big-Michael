@@ -180,16 +180,26 @@ export class Agent {
           });
 
           let result: unknown;
-          try {
-            result = await refs.toolRegistry.execute(block.name, block.input, toolCtx);
-          } catch (err) {
-            result = { error: (err as Error).message };
+          // Enforce capability-based access: only tools in the agent's allowedTools
+          // list may be called, regardless of what the LLM requests.
+          if (!this.definition.allowedTools.includes(block.name)) {
+            result = { error: `Tool '${block.name}' is not permitted for this agent` };
+          } else {
+            try {
+              result = await refs.toolRegistry.execute(block.name, block.input, toolCtx);
+            } catch (err) {
+              result = { error: (err as Error).message };
+            }
           }
 
+          // Cap each tool result to 100 KB before inserting into the message
+          // history to prevent a large result from exhausting the context window.
+          const raw = JSON.stringify(result);
+          const content = raw.length > 100_000 ? raw.slice(0, 100_000) + "…[truncated]" : raw;
           toolResults.push({
             type: "tool_result",
             tool_use_id: block.id,
-            content: JSON.stringify(result),
+            content,
           });
         }
 
@@ -319,8 +329,8 @@ function parseNeedOffer(
   const needMatch = text.match(/NEED:\s*(.+)/i);
   const offerMatch = text.match(/OFFER:\s*(.+)/i);
   return {
-    need: { agentId, text: needMatch?.[1]?.trim() ?? "No specific need this round." },
-    offer: { agentId, text: offerMatch?.[1]?.trim() ?? "General domain expertise available." },
+    need: { agentId, text: (needMatch?.[1]?.trim() ?? "No specific need this round.").slice(0, 500) },
+    offer: { agentId, text: (offerMatch?.[1]?.trim() ?? "General domain expertise available.").slice(0, 500) },
   };
 }
 
@@ -345,9 +355,9 @@ function parseFindings(text: string, def: AgentDefinition): Finding[] {
     const content = contentMatch?.[1]?.trim();
     if (!content) continue;
 
-    const citations: Citation[] = citationMatches.map((m) => ({
-      source: m[1].trim(),
-      quote: m[2].trim(),
+    const citations: Citation[] = citationMatches.slice(0, 50).map((m) => ({
+      source: m[1].trim().slice(0, 200),
+      quote: m[2].trim().slice(0, 500),
       page: m[3] ? parseInt(m[3].trim()) : undefined,
       mechanicallyVerified: false,
     }));

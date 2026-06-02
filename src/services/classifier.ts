@@ -11,13 +11,15 @@ const client = new Anthropic({ apiKey: Config.anthropic.apiKey });
 
 /** Detect the primary practice area from a document's title + first ~2000 chars. */
 export async function detectPracticeArea(title: string, content: string): Promise<string | null> {
+  // Strip newlines from title to prevent prompt structure injection.
+  const safeTitle = title.replace(/[\r\n]/g, " ").slice(0, 300);
   const snippet = content.slice(0, 2000);
   const prompt = `You are a legal categorisation assistant. Given a document title and excerpt, identify the single most relevant practice area from the list below. Reply with ONLY the exact practice area name, or "Unknown" if none fits.
 
 Practice areas:
 ${PRACTICE_AREAS.join("\n")}
 
-Document title: ${title}
+Document title: ${safeTitle}
 Document excerpt:
 ${snippet}`;
 
@@ -44,6 +46,7 @@ export async function detectClient(
   clients: Client[],
 ): Promise<{ clientNumber: string; clientName: string } | null> {
   if (!clients.length) return null;
+  const safeTitle = title.replace(/[\r\n]/g, " ").slice(0, 300);
   const snippet = content.slice(0, 3000);
   const clientList = clients.map((c) => `- ${c.clientNumber}: ${c.name}`).join("\n");
   const prompt = `You are a legal matter assistant. Given a document and a list of clients, identify which client the document most likely relates to. Reply with ONLY the client number (e.g. "C-001"), or "None" if no clear match.
@@ -51,7 +54,7 @@ export async function detectClient(
 Clients:
 ${clientList}
 
-Document title: ${title}
+Document title: ${safeTitle}
 Document excerpt:
 ${snippet}`;
 

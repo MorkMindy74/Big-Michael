@@ -267,6 +267,12 @@ function buildNeedOfferPrompt(def: AgentDefinition, ctx: AgentContext): string {
     ? ctx.memoryEntries.map((e) => `[Round ${e.round}] ${sanitizePromptContent(e.content)}`).join("\n")
     : "None yet.";
 
+  const sharedLines = ctx.sharedContext?.length
+    ? `\nFINDINGS ALREADY ESTABLISHED THIS ROUND (do not re-request what is already known):\n${
+        ctx.sharedContext.map((s) => sanitizePromptContent(s)).join("\n")
+      }\n`
+    : "";
+
   return `TASK: ${taskDesc}
 
 CURRENT ROUND GOAL (Round ${ctx.roundGoal.round}, Phase: ${ctx.roundGoal.phase}):
@@ -276,7 +282,7 @@ YOUR ROLE: ${def.name} — ${def.description}
 
 RELEVANT MEMORY FROM PRIOR ROUNDS:
 ${memoryLines}
-
+${sharedLines}
 Output exactly:
 NEED: <one sentence — what information or expertise you currently need from other agents>
 OFFER: <one sentence — what you can contribute this round given your role>`;

@@ -43,3 +43,5 @@ audit.jsonl
 
 # RuVector persistent stores (created on first run)
 data/
+*.rvdb
+*.db

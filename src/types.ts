@@ -273,6 +273,33 @@ export interface Task {
   completedAt?: Date;
   /** Structured tabular output — populated for the `tabulate` workflow. */
   table?: TaskTable;
+  /**
+   * Optional NOSLEGAL v4 taxonomy tags for this task — auto-detected from the
+   * task description at submission time.
+   */
+  noslegal?: NosLegalTags;
+  /** ID of the open TimeEntry tracking active work on this task (cleared on close). */
+  activeTimeEntryId?: string;
+}
+
+// ─── Time tracking ───────────────────────────────────────────────────────────
+
+export type TimeEventType = "task_run" | "gate_review";
+
+export interface TimeEntry {
+  id: string;
+  profileId: string;         // lawyer who submitted / reviewed
+  profileName: string;
+  taskId: string;
+  matterNumber?: string;
+  clientNumber?: string;
+  description: string;       // auto-generated: e.g. "Task: Review employment contract" or "Gate review: Finding #3"
+  event: TimeEventType;
+  startedAt: Date;
+  endedAt?: Date;            // undefined while task is still running
+  durationMs: number;        // 0 while running; populated on close
+  /** 6-minute billing increments (0.1 hr each). Rounded UP. 0 while running. */
+  billingUnits: number;
 }
 
 /** Structured spreadsheet-style output for the `tabulate` workflow. */

@@ -154,6 +154,7 @@ export const Config = {
     settingsFile: optional("SETTINGS_FILE", ".settings.json"),
     profilesFile: optional("PROFILES_FILE", ".profiles.json"),
     clientsFile: optional("CLIENTS_FILE", ".clients.json"),
+    timeFile: optional("TIME_FILE", ".time-entries.json"),
   },
 
   logging: {

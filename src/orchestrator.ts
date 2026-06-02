@@ -32,6 +32,7 @@ import { ROOT_ORCHESTRATOR, ALL_AGENT_DEFINITIONS } from "./agents/definitions.j
 import { SettingsStore } from "./settings/index.js";
 import { ProfileStore } from "./auth/index.js";
 import { ClientStore } from "./clients/index.js";
+import { TimeStore } from "./time/index.js";
 import { DyTopoEngine } from "./dytopo/engine.js";
 import { InterRoundMemoryStore } from "./memory/index.js";
 import { KnowledgeStore } from "./knowledge/index.js";
@@ -45,6 +46,7 @@ import {
   runVerificationPipeline,
   identifyGateRequests,
 } from "./protocols/index.js";
+import { detectNosLegal } from "./services/classifier.js";
 import type {
   Task,
   WorkflowType,
@@ -89,6 +91,7 @@ export class Orchestrator {
   readonly settings: SettingsStore;
   readonly profiles: ProfileStore;
   readonly clients: ClientStore;
+  readonly time: TimeStore;
 
   private readonly tasks: Map<string, Task> = new Map();
   private readonly gateEmitter = new EventEmitter();
@@ -104,6 +107,7 @@ export class Orchestrator {
     this.settings = new SettingsStore();
     this.profiles = new ProfileStore();
     this.clients = new ClientStore();
+    this.time = new TimeStore();
   }
 
   async init(): Promise<void> {
@@ -111,6 +115,7 @@ export class Orchestrator {
     await this.settings.init();
     await this.profiles.init();
     await this.clients.init();
+    await this.time.init();
     await Promise.all([
       this.registry.init(),
       this.memory.init(),
@@ -199,9 +204,35 @@ export class Orchestrator {
       updatedAt: new Date(),
     };
 
+    // Auto-detect NOSLEGAL taxonomy tags from the description (best-effort, never blocks).
+    try {
+      task.noslegal = await detectNosLegal(params.description, params.description);
+    } catch {
+      // detectNosLegal never throws, but guard defensively.
+    }
+
+    // Open a time entry when a profile is associated with this task.
+    if (params.createdByProfileId) {
+      const profile = this.profiles.get(params.createdByProfileId);
+      if (profile) {
+        const entry = this.time.open({
+          profileId: profile.id,
+          profileName: profile.name,
+          taskId: task.id,
+          matterNumber: task.matterNumber,
+          clientNumber: task.clientNumber,
+          description: `Task: ${task.description.slice(0, 200)}`,
+          event: "task_run",
+          startedAt: new Date(),
+        });
+        task.activeTimeEntryId = entry.id;
+      }
+    }
+
     this.tasks.set(task.id, task);
     logger.info("Task submitted", { taskId: task.id, workflow: params.workflowType });
     auditLogger.write({ event: "task.created", taskId: task.id, data: { description: params.description, workflowType: params.workflowType } });
+    await this.persistTasks();
 
     // Run asynchronously — callers poll getTask() for status
     this.runTask(task).catch((err) => {

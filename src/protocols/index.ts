@@ -108,7 +108,7 @@ export async function runDebate(finding: Finding, challengerAgentId: string): Pr
   // Generate challenge — Opus (debate routing)
   const challengeText = await callModel(
     CHALLENGER_SYSTEM,
-    `FINDING:\n${findingSnippet}\n\nCITATIONS:\n${finding.citations.map((c) => `SOURCE=${c.source} | QUOTE=${c.quote}`).join("\n")}`,
+    `FINDING:\n${findingSnippet}\n\nCITATIONS:\n${finding.citations.slice(0, 50).map((c) => `SOURCE=${c.source.slice(0, 200)} | QUOTE=${c.quote.slice(0, 500)}`).join("\n")}`,
     600,
     debateModel,
   );
@@ -177,7 +177,7 @@ export async function runVerificationPipeline(finding: Finding): Promise<Verific
     checksToRun.map(async (checkDesc) => {
       const response = await callModel(
         `You are a legal verification specialist. Assess the following finding against this criterion: ${checkDesc}\nRespond with: PASS or FAIL followed by a one-line note.`,
-        `FINDING:\n${verifySnippet}\n\nCITATIONS:\n${finding.citations.map((c) => `${c.source}: "${c.quote}"`).join("\n")}`,
+        `FINDING:\n${verifySnippet}\n\nCITATIONS:\n${finding.citations.slice(0, 50).map((c) => `${c.source.slice(0, 200)}: "${c.quote.slice(0, 500)}"`).join("\n")}`,
         150,
         verifyModel,
       );

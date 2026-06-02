@@ -355,9 +355,9 @@ function parseFindings(text: string, def: AgentDefinition): Finding[] {
     const content = contentMatch?.[1]?.trim();
     if (!content) continue;
 
-    const citations: Citation[] = citationMatches.map((m) => ({
-      source: m[1].trim(),
-      quote: m[2].trim(),
+    const citations: Citation[] = citationMatches.slice(0, 50).map((m) => ({
+      source: m[1].trim().slice(0, 200),
+      quote: m[2].trim().slice(0, 500),
       page: m[3] ? parseInt(m[3].trim()) : undefined,
       mechanicallyVerified: false,
     }));

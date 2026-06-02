@@ -42,6 +42,21 @@ const STATE_COOKIE = "bm_oauth_state";
 const MAX_REVOKED_JTIS = 100_000;
 const REVOKED_JTIS = new Set<string>();
 
+// Sliding-window rate limiter for auth endpoints (login + callback).
+// 20 requests per minute per IP — slows brute-force without external store.
+const AUTH_RATE_WINDOW_MS = 60_000;
+const AUTH_RATE_LIMIT = 20;
+const authRateMap = new Map<string, number[]>();
+function checkAuthRate(ip: string): boolean {
+  const now = Date.now();
+  const cutoff = now - AUTH_RATE_WINDOW_MS;
+  const hits = (authRateMap.get(ip) ?? []).filter((t) => t > cutoff);
+  if (hits.length >= AUTH_RATE_LIMIT) return false;
+  hits.push(now);
+  authRateMap.set(ip, hits);
+  return true;
+}
+
 type ProviderKey = "google" | "microsoft" | "linkedin";
 
 interface ProviderSpec {
@@ -114,6 +129,7 @@ export function registerAuthRoutes(app: FastifyInstance, orchestrator: Orchestra
   }));
 
   app.get("/auth/:provider/login", async (req, reply) => {
+    if (!checkAuthRate(req.ip)) return reply.code(429).send({ error: "Too many requests" });
     const provider = (req.params as { provider: string }).provider as ProviderKey;
     const spec = PROVIDERS[provider];
     if (!spec || !isConfigured(provider)) return reply.code(404).send({ error: "Provider not configured" });
@@ -130,6 +146,7 @@ export function registerAuthRoutes(app: FastifyInstance, orchestrator: Orchestra
   });
 
   app.get("/auth/:provider/callback", async (req, reply) => {
+    if (!checkAuthRate(req.ip)) return reply.code(429).send({ error: "Too many requests" });
     const provider = (req.params as { provider: string }).provider as ProviderKey;
     const spec = PROVIDERS[provider];
     if (!spec || !isConfigured(provider)) return reply.code(404).send({ error: "Provider not configured" });

@@ -250,6 +250,19 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
   await app.register(cors, { origin: Config.auth.allowedOrigins, credentials: true });
   await app.register(cookie, { secret: Config.auth.sessionSecret });
   await app.register(multipart, { limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
+
+  // Security headers on every response — API only (no HTML), so CSP is strict.
+  app.addHook("onSend", (_req, reply, _payload, done) => {
+    reply.header("X-Content-Type-Options", "nosniff");
+    reply.header("X-Frame-Options", "DENY");
+    reply.header("Referrer-Policy", "strict-origin-when-cross-origin");
+    reply.header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'");
+    if (Config.auth.baseUrl.startsWith("https://")) {
+      reply.header("Strict-Transport-Security", "max-age=63072000; includeSubDomains");
+    }
+    done();
+  });
+
   registerAuthRoutes(app, orchestrator);
 
   // Resolve the principal for a request. Auth OFF (local) → the LOCAL_PARTNER
@@ -639,8 +652,10 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
 
   app.post("/clients/check-conflict", async (req, reply) => {
     if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
-    const { name } = req.body as { name: string };
-    return orchestrator.clients.checkConflict(name);
+    const { name } = req.body as { name?: string };
+    const trimmed = (typeof name === "string" ? name : "").trim().slice(0, 500);
+    if (!trimmed) return reply.status(400).send({ error: "name is required" });
+    return orchestrator.clients.checkConflict(trimmed);
   });
 
   // ── Admin settings (presentation mode, DyTopo depth, debate, DocuSeal) ──────

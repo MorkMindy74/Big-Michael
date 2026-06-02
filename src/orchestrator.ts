@@ -18,7 +18,7 @@
  */
 
 import { EventEmitter } from "events";
-import { readdir, readFile, writeFile } from "fs/promises";
+import { readdir, readFile, writeFile, rename } from "fs/promises";
 import { join, extname } from "path";
 import { v4 as uuidv4 } from "uuid";
 import { Config } from "./config.js";
@@ -678,7 +678,9 @@ Rules:
       updatedAt: t.updatedAt.toISOString(),
       completedAt: t.completedAt?.toISOString(),
     }));
-    await writeFile(path, JSON.stringify(serialisable, null, 2), "utf8");
+    const tmp = `${path}.tmp`;
+    await writeFile(tmp, JSON.stringify(serialisable, null, 2), "utf8");
+    await rename(tmp, path);
     logger.debug("Tasks persisted", { count: this.tasks.size, path });
   }
 

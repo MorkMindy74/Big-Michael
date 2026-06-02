@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Discover Legal
 
 import { randomUUID } from "crypto";
-import { readFile, writeFile } from "fs/promises";
+import { readFile, writeFile, rename } from "fs/promises";
 import { Config } from "../config.js";
 import { logger } from "../logger.js";
 import type { Client, ClientMatter, ConflictCheckResult } from "../types.js";
@@ -38,8 +38,8 @@ export class ClientStore {
     adversaries?: string[];
     notes?: string;
   }): Promise<Client> {
-    const name = (input.name || "").trim();
-    const clientNumber = (input.clientNumber || "").trim();
+    const name = (input.name || "").trim().slice(0, 500);
+    const clientNumber = (input.clientNumber || "").trim().slice(0, 50);
     if (!name || !clientNumber) throw new Error("name and clientNumber are required");
     if (this.getByClientNumber(clientNumber)) throw new Error(`Client number ${clientNumber} already exists`);
     const now = new Date();
@@ -48,8 +48,8 @@ export class ClientStore {
       name,
       clientNumber,
       matters: [],
-      adversaries: (input.adversaries || []).map((a) => a.trim()).filter(Boolean),
-      notes: input.notes?.trim() || undefined,
+      adversaries: (input.adversaries || []).slice(0, 200).map((a) => a.trim().slice(0, 300)).filter(Boolean),
+      notes: input.notes?.trim().slice(0, 2000) || undefined,
       createdAt: now,
       updatedAt: now,
     };
@@ -61,9 +61,9 @@ export class ClientStore {
   async update(id: string, patch: Partial<Pick<Client, "name" | "adversaries" | "notes">>): Promise<Client> {
     const c = this.get(id);
     if (!c) throw new Error("Client not found");
-    if (typeof patch.name === "string" && patch.name.trim()) c.name = patch.name.trim();
-    if (Array.isArray(patch.adversaries)) c.adversaries = patch.adversaries.map((a) => a.trim()).filter(Boolean);
-    if (typeof patch.notes === "string") c.notes = patch.notes.trim() || undefined;
+    if (typeof patch.name === "string" && patch.name.trim()) c.name = patch.name.trim().slice(0, 500);
+    if (Array.isArray(patch.adversaries)) c.adversaries = patch.adversaries.slice(0, 200).map((a) => a.trim().slice(0, 300)).filter(Boolean);
+    if (typeof patch.notes === "string") c.notes = patch.notes.trim().slice(0, 2000) || undefined;
     c.updatedAt = new Date();
     await this.persist();
     return c;
@@ -80,9 +80,9 @@ export class ClientStore {
       throw new Error(`Matter ${input.matterNumber} already exists for this client`);
     }
     const matter: ClientMatter = {
-      matterNumber: input.matterNumber.trim(),
-      description: (input.description || "").trim(),
-      practiceArea: input.practiceArea?.trim() || undefined,
+      matterNumber: input.matterNumber.trim().slice(0, 50),
+      description: (input.description || "").trim().slice(0, 2000),
+      practiceArea: input.practiceArea?.trim().slice(0, 200) || undefined,
       openedAt: new Date(),
     };
     c.matters.push(matter);
@@ -113,9 +113,12 @@ export class ClientStore {
   /** Check whether onboarding `newClientName` conflicts with existing clients. */
   checkConflict(newClientName: string): ConflictCheckResult {
     const name = newClientName.toLowerCase().trim();
+    if (!name) return { hasConflict: false };
     for (const c of this.clients) {
       for (const adv of c.adversaries) {
-        if (adv.toLowerCase().includes(name) || name.includes(adv.toLowerCase())) {
+        const advLower = adv.toLowerCase();
+        if (!advLower) continue;
+        if (advLower.includes(name) || name.includes(advLower)) {
           return {
             hasConflict: true,
             conflictingClientId: c.id,
@@ -133,6 +136,8 @@ export class ClientStore {
   }
 
   private async persist(): Promise<void> {
-    await writeFile(this.path, JSON.stringify(this.clients, null, 2), "utf8");
+    const tmp = `${this.path}.tmp`;
+    await writeFile(tmp, JSON.stringify(this.clients, null, 2), "utf8");
+    await rename(tmp, this.path);
   }
 }

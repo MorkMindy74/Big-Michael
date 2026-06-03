@@ -44,6 +44,7 @@ import { parseLinkedInExport } from "../linkedin/parser.js";
 import { extractWritingSamples } from "../services/writingSamples.js";
 import { pluginRegistry } from "../adapters/plugin.js";
 import { costStore } from "../cost/index.js";
+import { clioClient } from "../integrations/clio.js";
 
 // ─── Tool schemas ─────────────────────────────────────────────────────────────
 
@@ -291,6 +292,9 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     }
     done();
   });
+
+  // Load persisted Clio tokens (no-op if file absent or not configured).
+  if (Config.clio.enabled) await clioClient.load();
 
   registerAuthRoutes(app, orchestrator);
 
@@ -1054,6 +1058,153 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     if (!profile) return reply.status(404).send({ error: "Profile not found" });
     const entries = costStore.forProfile(id);
     return { profileId: id, summary: costStore.summarise(entries), entries };
+  });
+
+  // ── Clio OAuth + matter import ────────────────────────────────────────────────
+  const CLIO_STATE_COOKIE = "clio_oauth_state";
+  const clioStateCookieOpts = { httpOnly: true as const, signed: true, path: "/", maxAge: 600 };
+
+  app.get("/auth/clio/status", async () => clioClient.status());
+
+  app.get("/auth/clio/connect", async (req, reply) => {
+    if (!Config.clio.enabled) return reply.code(503).send({ error: "Clio integration not configured — set CLIO_CLIENT_ID" });
+    if (!isPartner(getUser(req))) return reply.code(403).send({ error: "Partner role required" });
+    const state = randomUUID();
+    reply.setCookie(CLIO_STATE_COOKIE, state, clioStateCookieOpts);
+    return reply.redirect(clioClient.authUrl(state));
+  });
+
+  app.get("/auth/clio/callback", async (req, reply) => {
+    const { code, state } = req.query as { code?: string; state?: string };
+    const raw = (req.cookies as Record<string, string> | undefined)?.[CLIO_STATE_COOKIE];
+    const unsigned = raw
+      ? (req as unknown as { unsignCookie: (v: string) => { valid: boolean; value: string | null } }).unsignCookie(raw)
+      : { valid: false, value: null };
+    reply.clearCookie(CLIO_STATE_COOKIE, { path: "/" });
+    if (!code || !state || !unsigned.valid || unsigned.value !== state) {
+      return reply.redirect(`${Config.auth.uiUrl}?clio=error`);
+    }
+    try {
+      await clioClient.exchangeCode(code);
+      logger.info("Clio connected", clioClient.status());
+      return reply.redirect(`${Config.auth.uiUrl}?clio=connected`);
+    } catch (err) {
+      logger.warn("Clio OAuth callback failed", { error: (err as Error).message });
+      return reply.redirect(`${Config.auth.uiUrl}?clio=error`);
+    }
+  });
+
+  app.delete("/auth/clio/disconnect", async (req, reply) => {
+    if (!isPartner(getUser(req))) return reply.code(403).send({ error: "Partner role required" });
+    await clioClient.disconnect();
+    return { ok: true };
+  });
+
+  app.post("/tasks/from-clio-matter", async (req, reply) => {
+    if (!isPartner(getUser(req))) return reply.code(403).send({ error: "Partner role required" });
+    if (!clioClient.isConnected()) return reply.code(503).send({ error: "Clio not connected — visit /auth/clio/connect" });
+    const { matterId, workflowType } = req.body as { matterId: number; workflowType?: string };
+    if (!matterId) return reply.code(400).send({ error: "matterId is required" });
+
+    let matterRaw: unknown;
+    try {
+      matterRaw = await clioClient.getMatter(matterId);
+    } catch (err) {
+      return reply.code(502).send({ error: `Clio getMatter failed: ${(err as Error).message}` });
+    }
+
+    const matter = (matterRaw as { data?: Record<string, unknown> }).data ?? {};
+    const displayNumber = String(matter["display_number"] ?? "");
+    const description = String(matter["description"] ?? `Clio matter ${displayNumber}`);
+    const clientData = matter["client"] as { id?: number; name?: string } | undefined;
+    const clientId = clientData?.id ? String(clientData.id) : undefined;
+    const practiceAreaData = matter["practice_area"] as { name?: string } | undefined;
+    const clioArea = practiceAreaData?.name ?? "";
+
+    // Best-effort map to Big Michael practice area
+    const PRACTICE_AREA_MAP: Record<string, string> = {
+      "Corporate": "Corporate", "Employment": "Employment", "Litigation": "Litigation",
+      "Real Estate": "Real Estate", "Intellectual Property": "Intellectual Property",
+      "Tax": "Tax", "Family": "Family", "Criminal": "Criminal", "Immigration": "Immigration",
+      "Bankruptcy": "Bankruptcy", "Estate Planning": "Estate Planning", "Environmental": "Environmental",
+      "Healthcare": "Healthcare", "Finance": "Finance", "Compliance": "Compliance",
+    };
+    const practiceArea = Object.keys(PRACTICE_AREA_MAP).find((k) =>
+      clioArea.toLowerCase().includes(k.toLowerCase()),
+    ) ?? "Litigation";
+
+    // Ingest documents from Clio (cap at 20)
+    let documentsIngested = 0;
+    const SUPPORTED_EXT = [".pdf", ".docx", ".doc", ".txt"];
+    try {
+      const docsRaw = await clioClient.listDocuments(matterId, 20);
+      const docs = ((docsRaw as { data?: unknown[] }).data ?? []) as Array<{ id: number; name: string; content_type?: string }>;
+      for (const doc of docs.slice(0, 20)) {
+        const ext = doc.name ? ("." + doc.name.split(".").pop()!.toLowerCase()) : "";
+        if (!SUPPORTED_EXT.includes(ext)) continue;
+        try {
+          const buf = await clioClient.downloadDocument(doc.id);
+          const { samples } = await extractWritingSamples(buf, doc.name);
+          const content = samples.join("\n\n").slice(0, 50_000);
+          if (content.trim()) {
+            await orchestrator.knowledge.ingest({
+              title: doc.name,
+              content,
+              source: "clio",
+              documentType: "matter_file",
+            });
+            documentsIngested++;
+          }
+        } catch (err) {
+          logger.warn("Clio document ingest failed", { docId: doc.id, name: doc.name, error: (err as Error).message });
+        }
+      }
+    } catch (err) {
+      logger.warn("Clio listDocuments failed", { matterId, error: (err as Error).message });
+    }
+
+    const taskDesc = `[Clio matter ${displayNumber}] ${description} (Practice area: ${practiceArea})`;
+    const task = await orchestrator.submitTask({
+      description: taskDesc,
+      workflowType: (workflowType ?? "roundtable") as WorkflowType,
+      clientNumber: clientId,
+      matterNumber: displayNumber || undefined,
+    });
+    const user = getUser(req);
+    if (user) orchestrator.assignLawyers(task.id, [user.profileId]);
+    return reply.code(201).send({ task: orchestrator.getTask(task.id) ?? task, documentsIngested });
+  });
+
+  app.post("/time-entries/sync-to-clio", async (req, reply) => {
+    if (!isPartner(getUser(req))) return reply.code(403).send({ error: "Partner role required" });
+    if (!clioClient.isConnected()) return reply.code(503).send({ error: "Clio not connected — visit /auth/clio/connect" });
+    const { clioMatterId, from, to, matterNumber } = req.body as { clioMatterId: number; from?: string; to?: string; matterNumber?: string };
+    if (!clioMatterId) return reply.code(400).send({ error: "clioMatterId is required" });
+
+    const entries = orchestrator.time.list({
+      matterNumber: matterNumber || undefined,
+      from: from ? new Date(from) : undefined,
+      to: to ? new Date(to) : undefined,
+    }).filter((e) => e.durationMs > 0);
+
+    let synced = 0;
+    let errors = 0;
+    for (const entry of entries) {
+      try {
+        const durationHours = Math.max(entry.billingUnits * 0.1, entry.durationMs / 3_600_000);
+        const dateOn = entry.startedAt.toISOString().slice(0, 10);
+        await clioClient.createActivity(clioMatterId, {
+          description: entry.description,
+          dateOn,
+          durationHours: Math.round(durationHours * 100) / 100,
+        });
+        synced++;
+      } catch (err) {
+        logger.warn("Clio sync activity failed", { entryId: entry.id, error: (err as Error).message });
+        errors++;
+      }
+    }
+    return { synced, errors };
   });
 
   await app.listen({ port: Config.api.port, host: Config.api.host });

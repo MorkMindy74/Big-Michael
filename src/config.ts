@@ -278,6 +278,19 @@ export const Config = {
     },
   },
 
+  // Clio practice management integration — "bring your own app" OAuth
+  // Register an app at https://app.clio.com/settings/developer_applications
+  // then set CLIO_CLIENT_ID + CLIO_CLIENT_SECRET. Set CLIO_REGION to your
+  // firm's data region: us (default), eu, ca, or au.
+  clio: {
+    clientId: process.env.CLIO_CLIENT_ID ?? "",
+    clientSecret: process.env.CLIO_CLIENT_SECRET ?? "",
+    region: (process.env.CLIO_REGION ?? "us") as "us" | "eu" | "ca" | "au",
+    redirectUri: optional("CLIO_REDIRECT_URI", "http://localhost:3101/auth/clio/callback"),
+    tokensFile: optional("CLIO_TOKENS_FILE", "./data/clio-auth.json"),
+    enabled: Boolean(process.env.CLIO_CLIENT_ID),
+  },
+
   // Infisical — open-source secrets manager (https://infisical.com)
   // Self-host: docker compose up (see https://infisical.com/docs/self-hosting)
   // These values are bootstrap-only; all other secrets are fetched from Infisical at startup.

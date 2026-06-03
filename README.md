@@ -215,6 +215,22 @@ Unconfigured connectors return a structured `{ error: "not configured" }` — th
 |---|---|---|
 | TopCounsel | `topcounsel_route_matter`, `_get_panel` | `TOPCOUNSEL_API_KEY` |
 
+**Practice management**
+
+| Provider | Tools | Activation |
+|---|---|---|
+| Clio | `clio_list_matters`, `clio_get_matter`, `clio_list_documents`, `clio_download_document`, `clio_create_activity`, `clio_create_note`, `clio_list_contacts` | `CLIO_CLIENT_ID` + `CLIO_CLIENT_SECRET` (OAuth) |
+
+Clio uses OAuth 2.0 rather than a static API key. After setting credentials, a partner visits
+`GET /auth/clio/connect` to authorise the firm's Clio account. Tokens are persisted to
+`./data/clio-auth.json` and auto-refreshed. All four Clio data regions are supported (`CLIO_REGION=us|eu|ca|au`).
+
+**Matter import:** `POST /tasks/from-clio-matter` fetches a Clio matter's details, ingests its
+attached documents into the knowledge base, and submits a Big Michael task in one call.
+
+**Time sync:** `POST /time-entries/sync-to-clio` pushes Big Michael billable time entries back to a
+Clio matter as activity records, preserving 6-minute billing unit rounding.
+
 ---
 
 ## Using from Claude Code
@@ -273,6 +289,10 @@ POST   /profiles/:id/tone/linkedin-import  (backwards-compatible alias)
 GET    /cost/summary                                                       (partner only)
 GET    /tasks/:id/cost        GET /profiles/:id/cost
 GET    /auth/providers        GET /auth/:provider/{login,callback} · POST /auth/logout
+GET    /auth/clio/status      GET /auth/clio/connect · GET /auth/clio/callback
+DELETE /auth/clio/disconnect
+POST   /tasks/from-clio-matter                                             (partner only)
+POST   /time-entries/sync-to-clio                                         (partner only)
 GET    /audit · /audit/stream (SSE)        GET /health
 ```
 

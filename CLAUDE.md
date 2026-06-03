@@ -142,6 +142,8 @@ Each DyTopo round:
 | `src/services/toneAnalyzer.ts` | Chunked recursive Haiku tone analysis (MapReduce, O(log n) depth) |
 | `src/linkedin/parser.ts` | RFC 4180 CSV + minimal ZIP parser for LinkedIn data exports |
 | `src/cost/index.ts` | CostStore: per-call cost + power tracking, JSONL persistence, cache-aware pricing |
+| `src/integrations/clio.ts` | ClioClient — OAuth 2.0, token persistence, auto-refresh, 7 API methods, 4-region routing |
+| `src/tools/clio.ts` | 7 Clio tool definitions (list/get matters, documents, activities, notes, contacts) |
 | `src/mcp/server.ts` | MCP stdio server + Fastify REST API |
 | `src/templates/*.json` | Task templates (due-diligence, dispute-resolution, etc.) |
 | `src/types.ts` | All types: AgentDefinition (jurisdictions), Task (jurisdiction), NosLegalTags |
@@ -580,6 +582,12 @@ GET    /auth/providers              which OAuth providers are configured
 GET    /auth/:provider/login        start OAuth login (google|microsoft|linkedin)
 GET    /auth/:provider/callback     OAuth callback → session cookie
 POST   /auth/logout                 clear session
+GET    /auth/clio/status            Clio connection status { connected, firmName, connectedAt }
+GET    /auth/clio/connect           begin Clio OAuth flow                         [partner only]
+GET    /auth/clio/callback          Clio OAuth callback → store tokens
+DELETE /auth/clio/disconnect        revoke stored Clio tokens                     [partner only]
+POST   /tasks/from-clio-matter      import Clio matter → ingest docs → submit task [partner only]
+POST   /time-entries/sync-to-clio   push Big Michael time entries to Clio activities [partner only]
 GET    /audit                       query audit log (access-filtered)
 GET    /audit/stream                SSE live audit stream (access-filtered)
 GET    /health                      health check

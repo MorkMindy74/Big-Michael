@@ -39,6 +39,8 @@ import { MODE_COLORS, MODE_CAPABILITIES } from "../types.js";
 import { LOCAL_PARTNER, filterVisible, canViewTask, isPartner, resolveMode } from "../auth/index.js";
 import { registerAuthRoutes, readSessionCookie } from "../auth/oauth.js";
 import { detectPracticeArea, detectClient } from "../services/classifier.js";
+import { analyzeTone } from "../services/toneAnalyzer.js";
+import { parseLinkedInExport } from "../linkedin/parser.js";
 import { pluginRegistry } from "../adapters/plugin.js";
 
 // ─── Tool schemas ─────────────────────────────────────────────────────────────
@@ -649,6 +651,71 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
       return ok ? reply.status(200).send({ ok: true }) : reply.status(404).send({ error: "Profile not found" });
     } catch (err) {
       return reply.status(400).send({ error: (err as Error).message });
+    }
+  });
+
+  /**
+   * POST /profiles/:id/tone/linkedin-import
+   *
+   * Upload a LinkedIn data export (ZIP or CSV) to extract posts and generate a
+   * tone profile for the lawyer. Partners can import for any profile; lawyers
+   * can only import for themselves.
+   *
+   * How to get the export:
+   *   https://www.linkedin.com/mypreferences/d/download-my-data
+   *   → select "Posts & Articles" → Request archive → download ZIP
+   *   Upload the ZIP directly, or extract and upload Shares.csv / Posts and Articles.csv.
+   */
+  app.post("/profiles/:id/tone/linkedin-import", async (req, reply) => {
+    const user = getUser(req);
+    const { id } = req.params as { id: string };
+    if (!isPartner(user) && user?.profileId !== id) {
+      return reply.status(403).send({ error: "You can only import tone for your own profile" });
+    }
+    const profile = orchestrator.profiles.get(id);
+    if (!profile) return reply.status(404).send({ error: "Profile not found" });
+
+    let buf: Buffer;
+    try {
+      const data = await req.file();
+      if (!data) return reply.status(400).send({ error: "No file uploaded" });
+      buf = await data.toBuffer();
+    } catch {
+      return reply.status(400).send({ error: "File upload failed" });
+    }
+
+    const posts = parseLinkedInExport(buf);
+    if (!posts.length) {
+      return reply.status(422).send({
+        error: "No posts found in export. Upload the ZIP from linkedin.com/mypreferences/d/download-my-data or the extracted Shares.csv / Posts and Articles.csv.",
+        exportUrl: "https://www.linkedin.com/mypreferences/d/download-my-data",
+      });
+    }
+
+    try {
+      const tone = await analyzeTone(posts, profile.name, "linkedin_export");
+      const updated = await orchestrator.profiles.updateTone(id, tone);
+      logger.info("Tone profile generated from LinkedIn export", {
+        profileId: id, sampleCount: posts.length,
+      });
+      return reply.status(200).send({ toneProfile: updated.toneProfile, postsAnalysed: posts.length });
+    } catch (err) {
+      return reply.status(500).send({ error: (err as Error).message });
+    }
+  });
+
+  /** DELETE /profiles/:id/tone — clear a lawyer's tone profile. */
+  app.delete("/profiles/:id/tone", async (req, reply) => {
+    const user = getUser(req);
+    const { id } = req.params as { id: string };
+    if (!isPartner(user) && user?.profileId !== id) {
+      return reply.status(403).send({ error: "You can only clear your own tone profile" });
+    }
+    try {
+      const updated = await orchestrator.profiles.clearTone(id);
+      return reply.status(200).send(updated);
+    } catch (err) {
+      return reply.status(404).send({ error: (err as Error).message });
     }
   });
 

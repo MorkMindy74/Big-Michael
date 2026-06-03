@@ -617,8 +617,15 @@ export class Orchestrator {
     const goal = await this.generateRoundGoal(task, phase);
     goal.round = ++task.currentRound;
 
+    // Look up tone profile from the task's primary lawyer (creator first, then first assignee)
+    const lawyerTone = (() => {
+      const profileId = task.createdByProfileId ?? task.assignedLawyerIds?.[0];
+      if (!profileId) return undefined;
+      return this.profiles.get(profileId)?.toneProfile;
+    })();
+
     // Run DyTopo round
-    const roundState = await this.engine.runRound(task, goal);
+    const roundState = await this.engine.runRound(task, goal, lawyerTone);
     task.rounds.push(roundState);
 
     // Build source-text map for citation gate (from knowledge store)

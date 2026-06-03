@@ -24,6 +24,7 @@ import type {
   OfferDescriptor,
   RoundGoal,
   MemoryEntry,
+  ToneProfile,
 } from "../types.js";
 
 export interface AgentContext {
@@ -44,6 +45,8 @@ export interface AgentContext {
   memory?: InterRoundMemoryStore;
   /** Document owner scope — undefined means partner (see all), set for lawyer-submitted tasks */
   ownerId?: string;
+  /** Tone fingerprint of the assigned lawyer — injected into drafting-domain agent prompts. */
+  assignedLawyerTone?: ToneProfile;
 }
 
 export class Agent {
@@ -292,6 +295,11 @@ function buildProcessingPrompt(def: AgentDefinition, ctx: AgentContext): string 
     ? ctx.memoryEntries.map((e) => `[Round ${e.round} — ${e.phase}] ${sanitizePromptContent(e.content)}`).join("\n")
     : "No prior memory.";
 
+  const toneBlock =
+    def.domain === "drafting" && ctx.assignedLawyerTone
+      ? `\n────────────────────────────────────────────────────────────────\nASSIGNED LAWYER TONE PROFILE — mirror this voice in all drafted output:\n${ctx.assignedLawyerTone.injectionSnippet}\n`
+      : "";
+
   return `TASK: ${taskDesc}
 
 ROUND GOAL (Round ${ctx.roundGoal.round} — Phase: ${ctx.roundGoal.phase}):
@@ -305,7 +313,7 @@ ${memory}
 
 MESSAGES ROUTED TO YOU THIS ROUND (from other agents whose offers matched your needs):
 ${incoming}
-
+${toneBlock}
 ────────────────────────────────────────────────────────────────
 Produce your findings. For each distinct finding:
 

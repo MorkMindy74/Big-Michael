@@ -107,6 +107,18 @@ export const PRACTICE_AREAS = [
   "Environmental & Climate",
 ] as const;
 
+export interface ToneProfile {
+  generatedAt: string;
+  sourceType: "linkedin_export" | "writing_samples";
+  sampleCount: number;
+  formality: "formal" | "semi-formal" | "conversational";
+  sentenceStyle: "long-complex" | "mixed" | "short-punchy";
+  vocabulary: "technical-heavy" | "balanced" | "plain-language";
+  rhetoricalStyle: "assertive" | "collaborative" | "hedging" | "analytical";
+  signaturePatterns: string[];
+  injectionSnippet: string;
+}
+
 export interface LawyerProfile {
   id: string;
   name: string;
@@ -117,6 +129,8 @@ export interface LawyerProfile {
   practiceAreas?: string[];
   bio?: string;
   mode?: UserMode;
+  linkedinProfileUrl?: string;
+  toneProfile?: ToneProfile;
 }
 
 export interface ClientMatter {

@@ -8,9 +8,22 @@ import type { ToneProfile } from "../types.js";
 
 const client = new Anthropic({ apiKey: Config.anthropic.apiKey });
 
+// Posts per leaf-level analysis chunk. Small enough to fit comfortably in
+// a single Haiku call; large enough to show meaningful style patterns.
+const POST_CHUNK_SIZE = 8;
+
+// Style notes per rollup chunk. Notes are longer than raw posts so we
+// use a smaller fan-in to keep each rollup call tight.
+const NOTE_CHUNK_SIZE = 6;
+
+// Generous upper bound — chunking handles scale, so no need to hard-cap low.
+const MAX_POSTS = 500;
+
+// ─── Sanitization ─────────────────────────────────────────────────────────────
+
 /**
- * Strip structural prompt markers and control characters from user-supplied text
- * before embedding in the Haiku analysis prompt. Prevents crafted posts from
+ * Strip structural prompt markers and control characters from user-supplied
+ * text before embedding in any model prompt. Prevents crafted posts from
  * injecting fake FINDING blocks or overriding prompt instructions.
  */
 function sanitizeForHaiku(s: string): string {
@@ -19,111 +32,158 @@ function sanitizeForHaiku(s: string): string {
     .replace(/\bEND_FINDING\b/gi, "[END_FINDING]")
     .replace(/\bNO_FINDINGS\b/gi, "[NO_FINDINGS]")
     .replace(/\bNO_CHALLENGE\b/gi, "[NO_CHALLENGE]")
-    // Strip ASCII control characters except tab and newline
-    .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
+    .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, ""); // ASCII control chars except tab/newline
 }
 
+// ─── Utilities ────────────────────────────────────────────────────────────────
+
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+function haiku(content: string, maxTokens: number): Promise<string> {
+  return client.messages
+    .create({ model: "claude-haiku-4-5-20251001", max_tokens: maxTokens, messages: [{ role: "user", content }] })
+    .then((r) => ((r.content[0] as { type: string; text: string }).text ?? "").trim());
+}
+
+// ─── Leaf: analyse a single chunk of raw posts ────────────────────────────────
+
+async function analyzeChunk(posts: string[], safeName: string): Promise<string> {
+  const body = posts.map((p, i) => `---POST ${i + 1}---\n${p}`).join("\n\n");
+  return haiku(
+    `Analyse the writing style of ${safeName} from these ${posts.length} posts. ` +
+    `Write a single dense paragraph (3–5 sentences) capturing: formality level, sentence structure, vocabulary register, rhetorical habits, and any distinctive phrases or transitions. ` +
+    `Be specific — quote actual words or phrases observed. ` +
+    `Plain prose only. No JSON, no headers, no bullet points.\n\n${body}`,
+    300,
+  );
+}
+
+// ─── Internal node: merge a batch of style notes ─────────────────────────────
+
+async function rollupNotes(notes: string[], safeName: string): Promise<string> {
+  const body = notes.map((n, i) => `[Observation ${i + 1}]\n${n}`).join("\n\n");
+  return haiku(
+    `Synthesise these ${notes.length} writing style observations for ${safeName} into one coherent paragraph. ` +
+    `Preserve specific phrases and concrete patterns. Where observations conflict, note the variation briefly. ` +
+    `Plain prose only. No JSON, no headers, no bullet points.\n\n${body}`,
+    300,
+  );
+}
+
+// ─── Root: convert final prose note → structured ToneProfile ─────────────────
+
+async function buildProfile(
+  finalNote: string,
+  safeName: string,
+  meta: { sampleCount: number; sourceType: ToneProfile["sourceType"] },
+): Promise<ToneProfile> {
+  const raw = await haiku(
+    `Convert this writing style description for ${safeName} into structured JSON. ` +
+    `Respond with ONLY valid JSON — no prose, no markdown fences.\n\n` +
+    `Shape:\n` +
+    `{\n` +
+    `  "formality": "formal" | "semi-formal" | "conversational",\n` +
+    `  "sentenceStyle": "long-complex" | "mixed" | "short-punchy",\n` +
+    `  "vocabulary": "technical-heavy" | "balanced" | "plain-language",\n` +
+    `  "rhetoricalStyle": "assertive" | "collaborative" | "hedging" | "analytical",\n` +
+    `  "signaturePatterns": ["<specific observation>", ...],\n` +
+    `  "injectionSnippet": "<3–5 sentence instruction for an LLM drafter to mirror this voice, starting with the lawyer's first name>"\n` +
+    `}\n\n` +
+    `signaturePatterns: 2–5 concrete observations quoting actual words or habits observed.\n` +
+    `injectionSnippet: must read as a direct instruction, e.g. "${safeName} writes with directness and economy..."\n\n` +
+    `Style description:\n${finalNote}`,
+    800,
+  );
+
+  const stripped = raw.replace(/```(?:json)?/gi, "").trim();
+  const s = stripped.indexOf("{");
+  const e = stripped.lastIndexOf("}");
+  if (s === -1 || e === -1 || e <= s) throw new Error("buildProfile returned invalid JSON");
+
+  const p = JSON.parse(stripped.slice(s, e + 1)) as Record<string, unknown>;
+
+  const pick = <T extends string>(val: unknown, allowed: readonly T[], fallback: T): T =>
+    (allowed as readonly unknown[]).includes(val) ? (val as T) : fallback;
+
+  return {
+    generatedAt: new Date().toISOString(),
+    sourceType: meta.sourceType,
+    sampleCount: meta.sampleCount,
+    formality:      pick(p.formality,      ["formal", "semi-formal", "conversational"] as const, "semi-formal"),
+    sentenceStyle:  pick(p.sentenceStyle,  ["long-complex", "mixed", "short-punchy"] as const,   "mixed"),
+    vocabulary:     pick(p.vocabulary,     ["technical-heavy", "balanced", "plain-language"] as const, "balanced"),
+    rhetoricalStyle:pick(p.rhetoricalStyle,["assertive", "collaborative", "hedging", "analytical"] as const, "analytical"),
+    signaturePatterns: Array.isArray(p.signaturePatterns)
+      ? (p.signaturePatterns as unknown[]).filter((x): x is string => typeof x === "string").map((x) => x.slice(0, 200)).slice(0, 5)
+      : [],
+    injectionSnippet: typeof p.injectionSnippet === "string" && p.injectionSnippet
+      ? p.injectionSnippet.slice(0, 1000)
+      : `${safeName} — no distinctive style detected. Write in clear, professional legal English.`,
+  };
+}
+
+// ─── Recursive rollup ─────────────────────────────────────────────────────────
+
+async function recursiveRollup(
+  items: string[],
+  safeName: string,
+  level: number,
+  isRaw: boolean,
+): Promise<string> {
+  const chunkSize = isRaw ? POST_CHUNK_SIZE : NOTE_CHUNK_SIZE;
+  const chunks = chunkArray(items, chunkSize);
+
+  logger.debug("Tone rollup", { level, chunks: chunks.length, items: items.length, isRaw });
+
+  // Process all chunks at this level in parallel
+  const notes = await Promise.all(
+    chunks.map((c) => (isRaw ? analyzeChunk(c, safeName) : rollupNotes(c, safeName))),
+  );
+
+  // Single note — recursion is complete
+  if (notes.length === 1) return notes[0];
+
+  // Multiple notes — recurse (notes are never raw)
+  return recursiveRollup(notes, safeName, level + 1, false);
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
 /**
- * Analyse an array of writing samples (LinkedIn posts, emails, anything) and
- * return a structured ToneProfile including a ready-to-inject prompt snippet.
+ * Analyse writing samples using a chunked recursive rollup.
  *
- * Uses Haiku for speed and cost — tone analysis doesn't need heavy reasoning.
+ * Each leaf chunk of POST_CHUNK_SIZE posts is analysed in parallel by Haiku.
+ * The resulting style notes are merged in parallel batches of NOTE_CHUNK_SIZE,
+ * recursing until a single note remains. That note is converted to a
+ * structured ToneProfile by a final Haiku call.
+ *
+ * Handles any number of posts up to MAX_POSTS with O(log n) depth and
+ * full parallelism at every level — no context-window overflow, no truncation.
  */
 export async function analyzeTone(
   samples: string[],
   lawyerName: string,
   sourceType: ToneProfile["sourceType"],
 ): Promise<ToneProfile> {
-  // Sanitize lawyerName before embedding in the prompt
   const safeName = sanitizeForHaiku(lawyerName.trim().slice(0, 200));
 
-  const trimmed = samples
+  const posts = samples
     .map((s) => sanitizeForHaiku(s.trim()))
     .filter(Boolean)
-    .slice(0, 50); // cap at 50 samples
+    .slice(0, MAX_POSTS);
 
-  if (!trimmed.length) throw new Error("No writing samples provided");
+  if (!posts.length) throw new Error("No writing samples provided");
 
-  // Use a delimiter that cannot appear in user content (UUID-bracketed boundary)
-  const SEP = "---SAMPLE_BOUNDARY---";
-  const joined = trimmed.map((s, i) => `${SEP}\n[Sample ${i + 1}]\n${s}`).join("\n\n");
-  // Cap total input to avoid large context costs
-  const excerpt = joined.slice(0, 12_000);
+  logger.info("Tone analysis starting", { lawyer: safeName, posts: posts.length, sourceType });
 
-  const prompt = `You are a writing style analyst. Analyse the following writing samples from ${safeName} and identify their distinctive tone and style. Respond with ONLY valid JSON — no prose, no markdown fences.
+  const finalNote = await recursiveRollup(posts, safeName, 0, true);
+  const profile = await buildProfile(finalNote, safeName, { sampleCount: posts.length, sourceType });
 
-Use exactly this shape:
-{
-  "formality": "formal" | "semi-formal" | "conversational",
-  "sentenceStyle": "long-complex" | "mixed" | "short-punchy",
-  "vocabulary": "technical-heavy" | "balanced" | "plain-language",
-  "rhetoricalStyle": "assertive" | "collaborative" | "hedging" | "analytical",
-  "signaturePatterns": ["<pattern 1>", "<pattern 2>", "<pattern 3>"],
-  "injectionSnippet": "<2–4 sentence paragraph describing the voice in second person, starting with the lawyer's first name, written so an LLM can mirror it>"
-}
+  logger.info("Tone analysis complete", { lawyer: safeName, formality: profile.formality, rhetoric: profile.rhetoricalStyle });
 
-signaturePatterns: 2–5 specific, concrete observations (e.g. "opens paragraphs with declarative statements", "uses 'it is clear that' to signal conclusions", "favours short rhetorical questions").
-
-injectionSnippet: write it as an instruction to an LLM drafter, e.g. "${safeName} writes with directness and economy. She favours short declarative sentences and signals transitions with 'Crucially,' and 'The key issue is'. She avoids passive voice and hedging language. Mirror this style in all drafted output."
-
-Writing samples (each preceded by ${SEP}):
-${excerpt}`;
-
-  try {
-    const msg = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 1024,
-      messages: [{ role: "user", content: prompt }],
-    });
-
-    const text = (msg.content[0] as { type: string; text: string }).text?.trim() ?? "";
-    const stripped = text.replace(/```(?:json)?/gi, "").trim();
-    const start = stripped.indexOf("{");
-    const end = stripped.lastIndexOf("}");
-    if (start === -1 || end === -1 || end <= start) {
-      throw new Error("Tone analysis returned invalid JSON");
-    }
-
-    const parsed = JSON.parse(stripped.slice(start, end + 1)) as Record<string, unknown>;
-
-    const formality = (["formal", "semi-formal", "conversational"] as const).find(
-      (v) => v === parsed.formality,
-    ) ?? "semi-formal";
-    const sentenceStyle = (["long-complex", "mixed", "short-punchy"] as const).find(
-      (v) => v === parsed.sentenceStyle,
-    ) ?? "mixed";
-    const vocabulary = (["technical-heavy", "balanced", "plain-language"] as const).find(
-      (v) => v === parsed.vocabulary,
-    ) ?? "balanced";
-    const rhetoricalStyle = (["assertive", "collaborative", "hedging", "analytical"] as const).find(
-      (v) => v === parsed.rhetoricalStyle,
-    ) ?? "analytical";
-
-    const signaturePatterns = Array.isArray(parsed.signaturePatterns)
-      ? (parsed.signaturePatterns as unknown[])
-          .filter((p): p is string => typeof p === "string")
-          .map((p) => p.slice(0, 200))
-          .slice(0, 5)
-      : [];
-
-    const injectionSnippet =
-      typeof parsed.injectionSnippet === "string" && parsed.injectionSnippet
-        ? parsed.injectionSnippet.slice(0, 1000)
-        : `${safeName} — no distinctive style pattern detected. Write in clear, professional legal English.`;
-
-    return {
-      generatedAt: new Date().toISOString(),
-      sourceType,
-      sampleCount: trimmed.length,
-      formality,
-      sentenceStyle,
-      vocabulary,
-      rhetoricalStyle,
-      signaturePatterns,
-      injectionSnippet,
-    };
-  } catch (err) {
-    logger.warn("Tone analysis failed", { error: (err as Error).message });
-    throw err;
-  }
+  return profile;
 }

@@ -63,7 +63,7 @@ A real matter, mid-flight — the bench self-organising, then the cited result.
 | One-size config | **Admin panel** — lawyer/non-lawyer mode, DyTopo depth, verification & DocuSeal, applied live |
 | Generic document store | Documents auto-classified by **practice area** with matching lawyers surfaced on ingest |
 | No billing integration | Automatic **6-minute billable time units** tracked per lawyer, per matter, exportable as CSV |
-| Generic output voice | Per-lawyer **voice fingerprinting** from LinkedIn posts — drafting agents mirror the assigned lawyer's writing style |
+| Generic output voice | Per-lawyer **voice fingerprinting** from LinkedIn posts, DOCX, PDF, or CSV — drafting agents mirror the assigned lawyer's style |
 | Black-box costs | **Per-call cost tracking** with prompt-cache-aware pricing, local power estimates, and an admin cost dashboard |
 
 ---
@@ -132,7 +132,7 @@ Agents act through a typed `ToolRegistry`. Highlights:
 | `pdf_extract_text` · `pdf_extract_tables` · `pdf_ocr` · `pdf_generate` | PyMuPDF / Camelot / Tesseract backend |
 | `docuseal_send_for_signing` | DocuSeal e-signature dispatch + status |
 | `web_search` · `translate` · `citation_check` | Tavily search, translation, source verification |
-| 18 connector tools | CourtListener · Westlaw · Everlaw · Trellis · Descrybe · Ironclad · iManage · Definely |
+| 32 connector tools | CourtListener · Westlaw · Everlaw · Trellis · Descrybe · Ironclad · iManage · Definely · DocuSign CLM · Lawve AI · Solve Intelligence · Google Drive · Box · Slack · TopCounsel |
 
 > Document generation, tabular review, and tracked-change redlining are ported from
 > [Mike](https://github.com/willchen96/mike) (AGPL-3.0) and adapted to Big Michael's tool
@@ -177,8 +177,10 @@ and pull cited findings, tracked-change `.docx`, and tabular-review CSVs.
 
 ## Legal data connectors
 
-Big Michael ships 18 connector tools across 8 providers, all using Streamable HTTP MCP (JSON-RPC 2.0).
+Big Michael ships 32 connector tools across 15 providers, all using Streamable HTTP MCP (JSON-RPC 2.0).
 Unconfigured connectors return a structured `{ error: "not configured" }` — they never crash the server.
+
+**Legal research & courts**
 
 | Provider | Tools | Activation |
 |---|---|---|
@@ -187,9 +189,31 @@ Unconfigured connectors return a structured `{ error: "not configured" }` — th
 | Everlaw | `everlaw_search_documents`, `_get_review_set` | `EVERLAW_API_KEY` |
 | Trellis | `trellis_search_cases`, `_get_docket`, `_judge_analytics` | `TRELLIS_API_KEY` |
 | Descrybe | `descrybe_search_cases`, `_check_citation` | `DESCRYBE_API_KEY` |
+| Solve Intelligence | `solve_intelligence_search_patents`, `_draft_claims` | `SOLVE_INTELLIGENCE_API_KEY` |
+
+**Contract & document management**
+
+| Provider | Tools | Activation |
+|---|---|---|
 | Ironclad | `ironclad_search_contracts`, `_get_contract` | `IRONCLAD_API_KEY` |
+| DocuSign CLM | `docusign_search_contracts`, `_get_envelope` | `DOCUSIGN_API_KEY` |
 | iManage | `imanage_search`, `_get_document` | `IMANAGE_API_KEY` |
 | Definely | `definely_analyze_structure`, `_resolve_definition` | `DEFINELY_API_KEY` |
+| Lawve AI | `lawve_review_contract`, `_search_clauses` | `LAWVE_API_KEY` |
+
+**VDR & productivity**
+
+| Provider | Tools | Activation |
+|---|---|---|
+| Google Drive | `google_drive_search`, `_get_file` | `GOOGLE_DRIVE_API_KEY` |
+| Box | `box_search`, `_get_file` | `BOX_API_KEY` |
+| Slack | `slack_search`, `_send_message` | `SLACK_API_KEY` |
+
+**Outside counsel**
+
+| Provider | Tools | Activation |
+|---|---|---|
+| TopCounsel | `topcounsel_route_matter`, `_get_panel` | `TOPCOUNSEL_API_KEY` |
 
 ---
 
@@ -244,7 +268,8 @@ POST   /clients/:id/matters   DELETE /clients/:id/matters/:matterNumber   (partn
 POST   /clients/check-conflict                                             (partner only)
 GET    /time-entries          GET /time-entries/export.{json,csv}          (partner: all; lawyer: own)
 GET    /analytics/noslegal                                                 (partner only)
-POST   /profiles/:id/tone/linkedin-import  DELETE /profiles/:id/tone
+POST   /profiles/:id/tone/import           DELETE /profiles/:id/tone
+POST   /profiles/:id/tone/linkedin-import  (backwards-compatible alias)
 GET    /cost/summary                                                       (partner only)
 GET    /tasks/:id/cost        GET /profiles/:id/cost
 GET    /auth/providers        GET /auth/:provider/{login,callback} · POST /auth/logout
@@ -296,12 +321,18 @@ so work product reads as if the lawyer wrote it themselves, not as generic AI ou
 
 **How it works:**
 
-1. Partner or lawyer uploads their LinkedIn data export to `POST /profiles/:id/tone/linkedin-import`
-   (multipart ZIP, or extracted `Shares.csv` / `Posts and Articles.csv`)
-2. The parser hand-rolls RFC 4180 CSV decoding and ZIP decompression (`inflateRawSync`) — no new deps
-3. Post content is sanitised (`sanitizeForHaiku` strips `FINDING:/END_FINDING` markers and other
+1. Partner or lawyer uploads writing samples to `POST /profiles/:id/tone/import` or clicks
+   **Voice** in Admin › Users — the UI shows a polished modal with drag-and-drop and a live
+   profile display once the voice is built
+2. Any of the following file types are accepted:
+   - **LinkedIn ZIP** (or extracted `Shares.csv` / `Posts and Articles.csv`) — detected automatically
+   - **DOCX** — paragraphs extracted from `word/document.xml`
+   - **PDF** — PyMuPDF text extraction, split into paragraphs
+   - **CSV** — scores columns by average text length; uses the richest column (or joins all cells)
+   - **Plain text / Markdown** — split on double-newlines
+3. Content is sanitised (`sanitizeForHaiku` strips `FINDING:/END_FINDING` markers and other
    prompt injection vectors) before reaching any model
-4. A chunked recursive MapReduce Haiku analysis runs: batches of 8 posts → prose notes → merged
+4. A chunked recursive MapReduce Haiku analysis runs: batches of 8 samples → prose notes → merged
    up to a single note → structured `ToneProfile`
 5. The `ToneProfile` is stored on the lawyer's profile and injected into all drafting-domain agent
    system prompts and the final Opus synthesis call
@@ -318,13 +349,14 @@ so work product reads as if the lawyer wrote it themselves, not as generic AI ou
 | `injectionSnippet` | 3–5 sentence LLM drafter instruction — injected verbatim into agent prompts |
 
 The `injectionSnippet` is sanitised before injection. `DELETE /profiles/:id/tone` clears the profile.
+The API also accepts `POST /profiles/:id/tone/linkedin-import` as a backwards-compatible alias.
 
-**Getting the LinkedIn export:**
+**Getting a LinkedIn export:**
 
 1. Go to <https://www.linkedin.com/mypreferences/d/download-my-data>
 2. Select **Posts & Articles** → **Request archive**
 3. Download the ZIP when LinkedIn emails you the link
-4. Upload the ZIP (or the extracted CSV) to the endpoint above
+4. Upload the ZIP (or the extracted CSV) — or just drop a DOCX, PDF, or CSV of your own writing
 
 ---
 
@@ -482,7 +514,7 @@ Profiles are auto-provisioned on first login (partner if the email is in
 | `src/knowledge/index.ts` | Document knowledge base — chunk ingestion + semantic search |
 | `src/protocols/` | CitationGate · DebateProtocol · VerificationPipeline |
 | `src/tools/` | Tool registry — PDF, DocuSeal, docx, tabular, document, tracked-changes |
-| `src/tools/connectors.ts` | 18 legal connector tools across 8 providers |
+| `src/tools/connectors.ts` | 32 legal connector tools across 15 providers |
 | `src/routing/model.ts` | Haiku / Sonnet / Opus / Ollama / local routing |
 | `src/auth/` | Lawyer profiles, roles, RLS access control + OAuth login |
 | `src/clients/` | Client roster, matter sub-lists, conflict-of-interest checks |
@@ -490,6 +522,7 @@ Profiles are auto-provisioned on first login (partner if the email is in
 | `src/services/classifier.ts` | Haiku-based practice area + client + NOSLEGAL detection |
 | `src/services/toneAnalyzer.ts` | Chunked recursive Haiku tone analysis (MapReduce) for voice fingerprinting |
 | `src/linkedin/parser.ts` | RFC 4180 CSV + minimal ZIP parser for LinkedIn data exports |
+| `src/services/writingSamples.ts` | Multi-format writing sample extractor — LinkedIn ZIP/CSV, DOCX, PDF, generic CSV, plain text |
 | `src/cost/index.ts` | `CostStore`, pricing table, `calcCostUsd`, `calcWattHours` |
 | `src/settings/` | Live admin settings (DyTopo depth, debate, DocuSeal, modes) |
 | `src/mcp/server.ts` | MCP stdio server + Fastify REST API |

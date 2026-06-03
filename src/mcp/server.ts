@@ -1067,8 +1067,8 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
   app.get("/auth/clio/status", async () => clioClient.status());
 
   app.get("/auth/clio/connect", async (req, reply) => {
-    if (!Config.clio.enabled) return reply.code(503).send({ error: "Clio integration not configured — set CLIO_CLIENT_ID" });
     if (!isPartner(getUser(req))) return reply.code(403).send({ error: "Partner role required" });
+    if (!Config.clio.enabled) return reply.code(503).send({ error: "Clio integration not configured — set CLIO_CLIENT_ID" });
     const state = randomUUID();
     reply.setCookie(CLIO_STATE_COOKIE, state, clioStateCookieOpts);
     return reply.redirect(clioClient.authUrl(state));
@@ -1167,7 +1167,9 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     const task = await orchestrator.submitTask({
       description: taskDesc,
       workflowType: (workflowType ?? "roundtable") as WorkflowType,
-      clientNumber: clientId,
+      // clientNumber deliberately omitted — Clio's internal client ID is not the
+      // firm's own client numbering scheme (e.g. "C-001"). Leave unset so Big
+      // Michael's classifier can derive the correct client from the description.
       matterNumber: displayNumber || undefined,
     });
     const user = getUser(req);

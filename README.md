@@ -63,6 +63,8 @@ A real matter, mid-flight — the bench self-organising, then the cited result.
 | One-size config | **Admin panel** — lawyer/non-lawyer mode, DyTopo depth, verification & DocuSeal, applied live |
 | Generic document store | Documents auto-classified by **practice area** with matching lawyers surfaced on ingest |
 | No billing integration | Automatic **6-minute billable time units** tracked per lawyer, per matter, exportable as CSV |
+| Generic output voice | Per-lawyer **voice fingerprinting** from LinkedIn posts — drafting agents mirror the assigned lawyer's writing style |
+| Black-box costs | **Per-call cost tracking** with prompt-cache-aware pricing, local power estimates, and an admin cost dashboard |
 
 ---
 
@@ -242,6 +244,9 @@ POST   /clients/:id/matters   DELETE /clients/:id/matters/:matterNumber   (partn
 POST   /clients/check-conflict                                             (partner only)
 GET    /time-entries          GET /time-entries/export.{json,csv}          (partner: all; lawyer: own)
 GET    /analytics/noslegal                                                 (partner only)
+POST   /profiles/:id/tone/linkedin-import  DELETE /profiles/:id/tone
+GET    /cost/summary                                                       (partner only)
+GET    /tasks/:id/cost        GET /profiles/:id/cost
 GET    /auth/providers        GET /auth/:provider/{login,callback} · POST /auth/logout
 GET    /audit · /audit/stream (SSE)        GET /health
 ```
@@ -281,6 +286,88 @@ Tasks carry **NOSLEGAL v4** multi-faceted taxonomy tags, auto-detected by Haiku 
 ```
 
 Aggregate breakdowns across all tasks are available at `GET /analytics/noslegal` (partner only).
+
+---
+
+## Lawyer voice fingerprinting
+
+Drafting agents and the final Opus synthesis call use the **assigned lawyer's writing style** —
+so work product reads as if the lawyer wrote it themselves, not as generic AI output.
+
+**How it works:**
+
+1. Partner or lawyer uploads their LinkedIn data export to `POST /profiles/:id/tone/linkedin-import`
+   (multipart ZIP, or extracted `Shares.csv` / `Posts and Articles.csv`)
+2. The parser hand-rolls RFC 4180 CSV decoding and ZIP decompression (`inflateRawSync`) — no new deps
+3. Post content is sanitised (`sanitizeForHaiku` strips `FINDING:/END_FINDING` markers and other
+   prompt injection vectors) before reaching any model
+4. A chunked recursive MapReduce Haiku analysis runs: batches of 8 posts → prose notes → merged
+   up to a single note → structured `ToneProfile`
+5. The `ToneProfile` is stored on the lawyer's profile and injected into all drafting-domain agent
+   system prompts and the final Opus synthesis call
+
+**ToneProfile fields:**
+
+| Field | Values |
+|---|---|
+| `formality` | `formal` · `semi-formal` · `conversational` |
+| `sentenceStyle` | description of typical sentence length and structure |
+| `vocabulary` | characterisation of preferred word register |
+| `rhetoricalStyle` | e.g. Socratic, declarative, narrative |
+| `signaturePatterns` | 2–5 concrete observations (specific phrases, habits, tics) |
+| `injectionSnippet` | 3–5 sentence LLM drafter instruction — injected verbatim into agent prompts |
+
+The `injectionSnippet` is sanitised before injection. `DELETE /profiles/:id/tone` clears the profile.
+
+**Getting the LinkedIn export:**
+
+1. Go to <https://www.linkedin.com/mypreferences/d/download-my-data>
+2. Select **Posts & Articles** → **Request archive**
+3. Download the ZIP when LinkedIn emails you the link
+4. Upload the ZIP (or the extracted CSV) to the endpoint above
+
+---
+
+## Cost visibility
+
+Every Anthropic and Ollama API call is recorded and persisted to `./data/costs.jsonl`.
+
+**Tracked per call:**
+
+- Model, provider, `inputTokens`, `outputTokens`
+- `cacheWriteTokens` (billed at 1.25× base input rate) and `cacheReadTokens` (billed at 0.10× base input rate)
+- `costUsd` — computed from the pricing table below
+- `estimatedWh` — local inference only; estimated from `LOCAL_INFERENCE_WATTS` × `durationMs`
+- `durationMs`, `context` (label), `taskId`, `profileId`
+
+**Pricing table (per million tokens, input / output):**
+
+| Model | Input | Output |
+|---|---|---|
+| Claude Haiku 4.5 | $1 | $5 |
+| Claude Sonnet 4.6 | $3 | $15 |
+| Claude Opus 4.8 | $15 | $75 |
+
+Override any entry via env: `COST_<MODEL_ID>_IN` / `COST_<MODEL_ID>_OUT` (USD per MTok).
+
+**Local power estimate:** set `LOCAL_INFERENCE_WATTS` to your GPU's TDP
+(default: 250 W for GPU, 30 W for Apple Silicon, 65 W for CPU).
+
+**REST endpoints:**
+
+```
+GET  /cost/summary          aggregate cost across all tasks (partner only)
+GET  /tasks/:id/cost        cost breakdown for a single task
+GET  /profiles/:id/cost     cost attributed to a lawyer's tasks
+```
+
+**Admin dashboard — Cost tab (partner only):**
+
+- Stat cards: total cost, total tokens, cache hit rate, estimated kWh
+- Stacked token breakdown bar: input / cache-write / cache-read / output
+- Cost by model — SVG bar chart
+- Cost by context — SVG bar chart (synthesis, debate, tool-agent, etc.)
+- Per-model detail table: calls, tokens, cache rates, total cost
 
 ---
 
@@ -401,6 +488,9 @@ Profiles are auto-provisioned on first login (partner if the email is in
 | `src/clients/` | Client roster, matter sub-lists, conflict-of-interest checks |
 | `src/time/index.ts` | Billable time tracking — 6-min units, open/close lifecycle, CSV export |
 | `src/services/classifier.ts` | Haiku-based practice area + client + NOSLEGAL detection |
+| `src/services/toneAnalyzer.ts` | Chunked recursive Haiku tone analysis (MapReduce) for voice fingerprinting |
+| `src/linkedin/parser.ts` | RFC 4180 CSV + minimal ZIP parser for LinkedIn data exports |
+| `src/cost/index.ts` | `CostStore`, pricing table, `calcCostUsd`, `calcWattHours` |
 | `src/settings/` | Live admin settings (DyTopo depth, debate, DocuSeal, modes) |
 | `src/mcp/server.ts` | MCP stdio server + Fastify REST API |
 | `src/adapters/` | Plugin adapter — drop JSON in `adapters/external/` for instant integration |

@@ -46,6 +46,7 @@ import { extractWritingSamples } from "../services/writingSamples.js";
 import { pluginRegistry } from "../adapters/plugin.js";
 import { costStore } from "../cost/index.js";
 import { clioClient } from "../integrations/clio.js";
+import { twentyClient } from "../integrations/twenty.js";
 
 // ─── Tool schemas ─────────────────────────────────────────────────────────────
 
@@ -1222,6 +1223,63 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
       }
     }
     return { synced, skipped, errors };
+  });
+
+  // ─── Twenty CRM ─────────────────────────────────────────────────────────────
+
+  app.get("/auth/twenty/status", async () => twentyClient.status());
+
+  /**
+   * POST /clients/:id/sync-to-twenty
+   *
+   * Upsert a Big Michael client as a Twenty Company. Searches Twenty by exact
+   * name first to avoid duplicates; creates if not found. Partner only.
+   */
+  app.post("/clients/:id/sync-to-twenty", async (req, reply) => {
+    if (!isPartner(getUser(req))) return reply.code(403).send({ error: "Partner role required" });
+    if (!twentyClient.isConfigured()) return reply.code(503).send({ error: "Twenty not configured — set TWENTY_API_URL and TWENTY_API_KEY" });
+    const { id } = req.params as { id: string };
+    const client = orchestrator.clients.get(id);
+    if (!client) return reply.code(404).send({ error: "Client not found" });
+    try {
+      const company = await twentyClient.upsertClientAsCompany(client);
+      return { ok: true, twentyCompanyId: company.id, name: company.name };
+    } catch (err) {
+      return reply.code(502).send({ error: (err as Error).message });
+    }
+  });
+
+  /**
+   * POST /tasks/:id/push-to-twenty
+   *
+   * Push a completed task's synthesis output to Twenty as a Note on the
+   * specified company. Requires the task to have a synthesis finding.
+   * Partners and the assigned lawyer may push. Partner only if no assignment.
+   */
+  app.post("/tasks/:id/push-to-twenty", async (req, reply) => {
+    if (!twentyClient.isConfigured()) return reply.code(503).send({ error: "Twenty not configured — set TWENTY_API_URL and TWENTY_API_KEY" });
+    const user = getUser(req);
+    const { id } = req.params as { id: string };
+    const task = await orchestrator.backend.getTask(id);
+    if (!task) return reply.code(404).send({ error: "Task not found" });
+    if (!canViewTask(user, task)) return reply.code(403).send({ error: "Access denied" });
+
+    const { twentyCompanyId } = req.body as { twentyCompanyId?: string };
+
+    const synthesis = task.findings?.find((f) => f.type === "synthesis") ?? task.findings?.[task.findings.length - 1];
+    const body = synthesis?.content ?? task.description;
+    const title = `Big Michael: ${task.description.slice(0, 120)}`;
+
+    try {
+      const note = await twentyClient.createNote({
+        title,
+        body,
+        companyId: twentyCompanyId,
+      });
+      return { ok: true, noteId: note.id, createdAt: note.createdAt };
+    } catch (err) {
+      return reply.code(502).send({ error: (err as Error).message });
+    }
   });
 
   await app.listen({ port: Config.api.port, host: Config.api.host });

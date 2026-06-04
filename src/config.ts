@@ -302,6 +302,15 @@ export const Config = {
     enabled: Boolean(process.env.CLIO_CLIENT_ID),
   },
 
+  // Twenty — open-source CRM (https://twenty.com)
+  // Self-host: docker run -d -p 3000:3000 twentyhq/twenty
+  // API key:   Settings → API in the Twenty admin panel
+  twenty: {
+    apiKey: process.env.TWENTY_API_KEY ?? "",
+    apiUrl: optional("TWENTY_API_URL", ""),
+    enabled: Boolean(process.env.TWENTY_API_KEY && process.env.TWENTY_API_URL),
+  },
+
   // Infisical — open-source secrets manager (https://infisical.com)
   // Self-host: docker compose up (see https://infisical.com/docs/self-hosting)
   // These values are bootstrap-only; all other secrets are fetched from Infisical at startup.

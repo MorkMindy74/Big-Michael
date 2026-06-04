@@ -41,6 +41,7 @@ import {
 } from "./documents.js";
 import { CONNECTOR_TOOLS } from "./connectors.js";
 import { CLIO_TOOLS } from "./clio.js";
+import { TWENTY_TOOLS } from "./twenty.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -345,6 +346,8 @@ const ALL_TOOLS: ToolImpl[] = [
   ...CONNECTOR_TOOLS,
   // Clio practice management — enabled when CLIO_CLIENT_ID is configured
   ...(Config.clio.enabled ? CLIO_TOOLS : []),
+  // Twenty CRM — enabled when TWENTY_API_KEY + TWENTY_API_URL are configured
+  ...(Config.twenty.enabled ? TWENTY_TOOLS : []),
 ];
 
 export class ToolRegistry {

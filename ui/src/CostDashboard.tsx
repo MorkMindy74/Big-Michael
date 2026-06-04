@@ -26,6 +26,12 @@ function fmtWh(n: number): string {
   return `${(n / 1000).toFixed(3)} kWh`;
 }
 
+function fmtCo2(g: number): string {
+  if (g < 1)    return `${(g * 1000).toFixed(1)} mg`;
+  if (g < 1000) return `${g.toFixed(1)} g`;
+  return `${(g / 1000).toFixed(3)} kg`;
+}
+
 // ─── Tiny SVG bar chart (horizontal) ─────────────────────────────────────────
 
 interface BarEntry { label: string; value: number; sub?: string; color: string }
@@ -219,10 +225,17 @@ export function CostDashboard({ notify }: { notify: (m: string) => void }) {
           <StatCard label="Total cost" value={fmt$(summary.totalUsd)} sub={`${summary.entryCount} calls`} />
           <StatCard label="Total tokens" value={fmtTok(totalTokens)} sub={`in ${fmtTok(summary.totalInputTokens)} · out ${fmtTok(summary.totalOutputTokens)}`} accent="var(--blue)" />
           <StatCard label="Cache reads" value={fmtTok(summary.totalCacheReadTokens)} sub={`≈ ${fmt$(cacheReadSavingsApprox)} saved`} accent="var(--green)" />
-          {summary.totalWh > 0
-            ? <StatCard label="Power draw" value={fmtWh(summary.totalWh)} sub="local inference estimate" accent="var(--text-dim)" />
-            : <StatCard label="Cache writes" value={fmtTok(summary.totalCacheWriteTokens)} sub="tokens written to cache" accent="var(--amber)" />
-          }
+          {summary.totalWh > 0 ? (
+            <StatCard label="Power draw" value={fmtWh(summary.totalWh)} sub="local inference estimate" accent="var(--text-dim)" />
+          ) : (
+            <StatCard label="Cache writes" value={fmtTok(summary.totalCacheWriteTokens)} sub="tokens written to cache" accent="var(--amber)" />
+          )}
+          {summary.totalCo2Grams > 0 && (
+            <StatCard label="CO₂ emitted" value={fmtCo2(summary.totalCo2Grams)} sub="grid intensity · local only" accent="var(--text-faint)" />
+          )}
+          {summary.totalElectricityCostUsd > 0 && (
+            <StatCard label="Elec. cost" value={fmt$(summary.totalElectricityCostUsd)} sub="IEA tariff · local only" accent="var(--text-faint)" />
+          )}
         </div>
       </Section>
 
@@ -256,7 +269,7 @@ export function CostDashboard({ notify }: { notify: (m: string) => void }) {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead>
               <tr style={{ color: "var(--text-faint)", textAlign: "left" }}>
-                {["Model", "Calls", "Cost", "Input", "Output", "Cache W", "Cache R", "Wh"].map((h) => (
+                {["Model", "Calls", "Cost", "Input", "Output", "Cache W", "Cache R", "Wh", "CO₂", "Elec."].map((h) => (
                   <th key={h} style={{ padding: "4px 10px 8px", fontWeight: 600, whiteSpace: "nowrap",
                     borderBottom: "1px solid var(--border)", letterSpacing: "0.04em", fontSize: 10, textTransform: "uppercase" }}>{h}</th>
                 ))}
@@ -275,6 +288,8 @@ export function CostDashboard({ notify }: { notify: (m: string) => void }) {
                   <td style={{ padding: "7px 10px", fontFamily: "var(--font-mono)", color: "var(--amber)", textAlign: "right" }}>{s.cacheWriteTokens ? fmtTok(s.cacheWriteTokens) : "—"}</td>
                   <td style={{ padding: "7px 10px", fontFamily: "var(--font-mono)", color: "var(--green)", textAlign: "right" }}>{s.cacheReadTokens ? fmtTok(s.cacheReadTokens) : "—"}</td>
                   <td style={{ padding: "7px 10px", fontFamily: "var(--font-mono)", color: "var(--text-faint)", textAlign: "right" }}>{s.wh ? fmtWh(s.wh) : "—"}</td>
+                  <td style={{ padding: "7px 10px", fontFamily: "var(--font-mono)", color: "var(--text-faint)", textAlign: "right" }}>{s.co2Grams ? fmtCo2(s.co2Grams) : "—"}</td>
+                  <td style={{ padding: "7px 10px", fontFamily: "var(--font-mono)", color: "var(--text-faint)", textAlign: "right" }}>{s.electricityCostUsd ? fmt$(s.electricityCostUsd) : "—"}</td>
                 </tr>
               ))}
             </tbody>

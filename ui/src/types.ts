@@ -297,6 +297,8 @@ export interface CostEntry {
   costUsd: number | null;
   estimatedWh: number | null;
   estimatedWatts: number | null;
+  co2Grams: number | null;
+  electricityCostUsd: number | null;
   durationMs: number;
   context: CostContext;
   taskId?: string;
@@ -311,6 +313,8 @@ export interface CostSummary {
   totalCacheWriteTokens: number;
   totalCacheReadTokens: number;
   totalWh: number;
+  totalCo2Grams: number;
+  totalElectricityCostUsd: number;
   byModel: Record<string, {
     usd: number;
     inputTokens: number;
@@ -318,6 +322,8 @@ export interface CostSummary {
     cacheWriteTokens: number;
     cacheReadTokens: number;
     wh: number;
+    co2Grams: number;
+    electricityCostUsd: number;
     calls: number;
   }>;
   byContext: Record<string, { usd: number; inputTokens: number; outputTokens: number; calls: number }>;

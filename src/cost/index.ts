@@ -24,6 +24,8 @@ import { appendFile, readFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { logger } from "../logger.js";
+import { calcEmissions } from "./emissions.js";
+import { Config } from "../config.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -55,6 +57,10 @@ export interface CostEntry {
   estimatedWh: number | null;
   /** Configured watts used for the estimate. */
   estimatedWatts: number | null;
+  /** CO₂ emissions in grams for this call (local inference only, from CO2.js grid data). */
+  co2Grams: number | null;
+  /** Estimated electricity cost in USD (local inference only, IEA 2024 tariff data). */
+  electricityCostUsd: number | null;
   durationMs: number;
   context: CostContext;
   taskId?: string;
@@ -69,6 +75,8 @@ export interface CostSummary {
   totalCacheWriteTokens: number;
   totalCacheReadTokens: number;
   totalWh: number;
+  totalCo2Grams: number;
+  totalElectricityCostUsd: number;
   byModel: Record<string, {
     usd: number;
     inputTokens: number;
@@ -76,6 +84,8 @@ export interface CostSummary {
     cacheWriteTokens: number;
     cacheReadTokens: number;
     wh: number;
+    co2Grams: number;
+    electricityCostUsd: number;
     calls: number;
   }>;
   byContext: Record<string, { usd: number; inputTokens: number; outputTokens: number; calls: number }>;
@@ -178,8 +188,17 @@ export class CostStore {
     }
   }
 
-  record(entry: Omit<CostEntry, "id" | "ts">): void {
-    const full: CostEntry = { id: randomUUID(), ts: new Date().toISOString(), ...entry };
+  record(entry: Omit<CostEntry, "id" | "ts" | "co2Grams" | "electricityCostUsd">): void {
+    const emissions = entry.estimatedWh != null
+      ? calcEmissions(entry.estimatedWh, Config.local.inferenceRegion)
+      : null;
+    const full: CostEntry = {
+      id: randomUUID(),
+      ts: new Date().toISOString(),
+      co2Grams: emissions?.co2Grams ?? null,
+      electricityCostUsd: emissions?.electricityCostUsd ?? null,
+      ...entry,
+    };
     this.entries.push(full);
     this.writeChain = this.writeChain
       .then(() => appendFile(COST_FILE, JSON.stringify(full) + "\n", "utf8"))
@@ -203,26 +222,34 @@ export class CostStore {
     let totalCacheWriteTokens = 0;
     let totalCacheReadTokens = 0;
     let totalWh = 0;
+    let totalCo2Grams = 0;
+    let totalElectricityCostUsd = 0;
 
     for (const e of entries) {
       const usd  = e.costUsd ?? 0;
       const wh   = e.estimatedWh ?? 0;
       const cw   = e.cacheWriteTokens ?? 0;
       const cr   = e.cacheReadTokens ?? 0;
-      totalUsd               += usd;
-      totalInputTokens       += e.inputTokens;
-      totalOutputTokens      += e.outputTokens;
-      totalCacheWriteTokens  += cw;
-      totalCacheReadTokens   += cr;
-      totalWh                += wh;
+      const co2  = e.co2Grams ?? 0;
+      const elec = e.electricityCostUsd ?? 0;
+      totalUsd                 += usd;
+      totalInputTokens         += e.inputTokens;
+      totalOutputTokens        += e.outputTokens;
+      totalCacheWriteTokens    += cw;
+      totalCacheReadTokens     += cr;
+      totalWh                  += wh;
+      totalCo2Grams            += co2;
+      totalElectricityCostUsd  += elec;
 
-      const m = byModel[e.model] ?? { usd: 0, inputTokens: 0, outputTokens: 0, cacheWriteTokens: 0, cacheReadTokens: 0, wh: 0, calls: 0 };
+      const m = byModel[e.model] ?? { usd: 0, inputTokens: 0, outputTokens: 0, cacheWriteTokens: 0, cacheReadTokens: 0, wh: 0, co2Grams: 0, electricityCostUsd: 0, calls: 0 };
       m.usd              += usd;
       m.inputTokens      += e.inputTokens;
       m.outputTokens     += e.outputTokens;
       m.cacheWriteTokens += cw;
       m.cacheReadTokens  += cr;
       m.wh               += wh;
+      m.co2Grams         += co2;
+      m.electricityCostUsd += elec;
       m.calls            += 1;
       byModel[e.model] = m;
 
@@ -237,7 +264,8 @@ export class CostStore {
     return {
       totalUsd, totalInputTokens, totalOutputTokens,
       totalCacheWriteTokens, totalCacheReadTokens,
-      totalWh, byModel, byContext, entryCount: entries.length,
+      totalWh, totalCo2Grams, totalElectricityCostUsd,
+      byModel, byContext, entryCount: entries.length,
     };
   }
 }

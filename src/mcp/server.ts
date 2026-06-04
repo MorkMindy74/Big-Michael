@@ -34,6 +34,7 @@ import { Config } from "../config.js";
 import { logger } from "../logger.js";
 import { auditLogger } from "../audit/index.js";
 import { Orchestrator } from "../orchestrator.js";
+import type { LegalBackend } from "../backend/index.js";
 import type { WorkflowType, SessionUser } from "../types.js";
 import { MODE_COLORS, MODE_CAPABILITIES } from "../types.js";
 import { LOCAL_PARTNER, filterVisible, canViewTask, isPartner, resolveMode } from "../auth/index.js";
@@ -237,7 +238,7 @@ const TOOLS = [
 
 // ─── MCP server ───────────────────────────────────────────────────────────────
 
-export async function startMcpServer(orchestrator: Orchestrator): Promise<void> {
+export async function startMcpServer(backend: LegalBackend): Promise<void> {
   const server = new Server(
     { name: "big-michael", version: "0.1.0" },
     { capabilities: { tools: {} } },
@@ -248,7 +249,7 @@ export async function startMcpServer(orchestrator: Orchestrator): Promise<void> 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     try {
-      const result = await handleTool(name, args ?? {}, orchestrator);
+      const result = await handleTool(name, args ?? {}, backend);
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
       };
@@ -528,6 +529,17 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
       return orchestrator.registry.search("", { tier: validTier, topK: 100 });
     }
     return orchestrator.registry.listAll();
+  });
+
+  // Inter-round memory query — mirrors the query_memory MCP tool so a thin
+  // RemoteBackend client (mcp mode) can reach memory without opening the DB.
+  app.post("/memory/query", async (req) => {
+    const body = (req.body ?? {}) as { query: string; taskId: string; agentId?: string; topK?: number };
+    return orchestrator.memory.query(body.query, {
+      taskId: body.taskId,
+      agentId: body.agentId,
+      topK: body.topK,
+    });
   });
 
   // T17: SSE streaming endpoint
@@ -1221,104 +1233,97 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
 async function handleTool(
   name: string,
   args: Record<string, unknown>,
-  orch: Orchestrator,
+  backend: LegalBackend,
 ): Promise<unknown> {
   switch (name) {
     case "submit_task":
-      return orch.submitTask({
+      return backend.submitTask({
         description: args.description as string,
         workflowType: args.workflowType as WorkflowType,
         documentIds: args.documentIds as string[] | undefined,
         clientNumber: args.clientNumber as string | undefined,
         matterNumber: args.matterNumber as string | undefined,
+        jurisdiction: args.jurisdiction as string | undefined,
       });
 
     case "get_task": {
-      const task = orch.getTask(args.taskId as string);
+      const task = await backend.getTask(args.taskId as string);
       if (!task) throw new Error(`Task not found: ${args.taskId}`);
       return task;
     }
 
     case "list_tasks":
-      return orch.listTasks();
+      return backend.listTasks();
 
     case "approve_gate":
-      orch.approveGate(args.taskId as string, args.gateId as string, args.note as string | undefined);
+      await backend.approveGate(args.taskId as string, args.gateId as string, args.note as string | undefined);
       return { ok: true };
 
     case "reject_gate":
-      orch.rejectGate(args.taskId as string, args.gateId as string, args.reason as string);
+      await backend.rejectGate(args.taskId as string, args.gateId as string, args.reason as string);
       return { ok: true };
 
     case "ingest_document":
-      return { id: await orch.knowledge.ingest(args as Parameters<typeof orch.knowledge.ingest>[0]) };
+      return backend.ingestDocument(args);
 
     case "search_knowledge":
-      return orch.knowledge.search(args.query as string, {
+      return backend.searchKnowledge(args.query as string, {
         topK: args.topK as number | undefined,
         jurisdiction: args.jurisdiction as string | undefined,
         documentType: args.documentType as string | undefined,
       });
 
     case "list_agents":
-      return orch.registry.search("", {
+      return backend.listAgents({
         tier: args.tier as 0 | 1 | 2 | 3 | undefined,
         topK: 100,
       });
 
     case "query_memory":
-      return orch.memory.query(args.query as string, {
+      return backend.queryMemory(args.query as string, {
         taskId: args.taskId as string,
         agentId: args.agentId as string | undefined,
         topK: args.topK as number | undefined,
       });
 
     case "list_templates":
-      return orch.listTemplates();
+      return backend.listTemplates();
 
     case "list_plugins":
-      return pluginRegistry.list();
+      return backend.listPlugins();
 
     case "submit_from_template":
-      return orch.submitFromTemplate(
+      return backend.submitFromTemplate(
         args.templateId as string,
         args.substitutions as Record<string, string> | undefined,
         args.documentIds as string[] | undefined,
       );
 
     case "get_round": {
-      const task = orch.getTask(args.taskId as string);
+      const task = await backend.getTask(args.taskId as string);
       if (!task) throw new Error(`Task not found: ${args.taskId}`);
       const roundState = task.rounds[(args.round as number) - 1];
       if (!roundState) throw new Error(`Round ${args.round} not found`);
       return roundState;
     }
 
-    case "get_audit": {
-      // MCP runs over stdio as the LOCAL_PARTNER (full partner access).
-      // Apply the same visibility filter as the REST endpoint so the pattern
-      // is explicit and safe if the transport is ever changed.
-      const allEntries = auditLogger.readRecent(
+    case "get_audit":
+      // MCP runs over stdio as the LOCAL_PARTNER (full partner access). The
+      // backend applies the same visibility filter as the REST endpoint.
+      return backend.getAudit(
         args.taskId as string | undefined,
         args.limit as number | undefined,
       );
-      // LOCAL_PARTNER is a partner — sees every entry. Filter is a no-op but
-      // makes the access intent explicit and consistent with the REST audit route.
-      const visibleIds = new Set(orch.listTasks().map((t) => t.id));
-      return allEntries.filter((e) => !e.taskId || visibleIds.has(e.taskId));
-    }
 
-    case "get_time_entries": {
+    case "get_time_entries":
       // MCP runs as LOCAL_PARTNER (full access). Partners see all time entries.
-      const filter = {
+      return backend.listTimeEntries({
         profileId: args.profileId as string | undefined,
         taskId: args.taskId as string | undefined,
         matterNumber: args.matterNumber as string | undefined,
-        from: args.from ? new Date(args.from as string) : undefined,
-        to: args.to ? new Date(args.to as string) : undefined,
-      };
-      return orch.time.list(filter);
-    }
+        from: args.from as string | undefined,
+        to: args.to as string | undefined,
+      });
 
     default:
       throw new Error(`Unknown tool: ${name}`);

@@ -173,6 +173,28 @@ npm run dev                             # console on :5173, proxies the API on :
 Open **http://localhost:5173** — convene a matter, watch rounds stream live, approve gates,
 and pull cited findings, tracked-change `.docx`, and tabular-review CSVs.
 
+### Run modes — browsing **and** the Claude Code MCP at the same time
+
+The vector DB under `./data` takes an exclusive single-writer lock and the REST API binds
+one port, so only **one** process can own them. To run the web console and the Claude Code
+MCP together, one process owns the DB and the other attaches as a thin client over the REST
+API. `BIG_MICHAEL_MODE` selects the role:
+
+| Mode | Behaviour | Use |
+|---|---|---|
+| `auto` *(default)* | Own the DB if the port is free; otherwise attach as an MCP client | Just works — the MCP coexists with a running console |
+| `backend` | Own DB + REST, never start MCP | The persistent console service — `npm run serve` |
+| `mcp` | Pure MCP client — errors if no backend is reachable | Force Claude Code's MCP to be a client |
+| `standalone` | Classic single process: own DB + REST + MCP on stdio | The original behaviour, on demand |
+
+```bash
+npm run serve                           # dedicated backend (owns DB + REST), no MCP
+```
+
+With a backend running, the console (`:5173 → :3101`) and Claude Code's MCP both connect to
+it — Claude Code's `.mcp.json` runs in `auto` mode, so it detects the owner and attaches as a
+client automatically. Set `BIG_MICHAEL_API` to point a client at a non-default owner URL.
+
 ---
 
 ## Legal data connectors
@@ -350,6 +372,11 @@ positions for the customer. Run a roundtable workflow.
 
 Claude Code submits the task, polls progress, approves any human gates, and surfaces the
 final synthesis.
+
+`.mcp.json` runs in `auto` mode: if a backend is already serving the REST API (e.g. the web
+console started with `npm run serve`), Claude Code's MCP attaches to it as a thin client
+instead of opening the vector DB itself — so the console and the MCP run side by side without
+fighting over the single-writer lock. See **Run modes** above.
 
 ---
 

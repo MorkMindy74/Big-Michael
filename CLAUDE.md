@@ -33,10 +33,19 @@ npm run smoke-test
 # 5. Start server (MCP stdio + REST API)
 npm start               # production (requires npm run build first)
 npm run dev             # dev mode with tsx watch
+npm run serve           # dedicated backend: owns DB + REST, no MCP (for running the UI + MCP together)
 ```
 
 REST API at `http://localhost:3101`.
 MCP server on stdio (activated when stdin is not a TTY — i.e. from Claude Code).
+
+**Run modes** (`BIG_MICHAEL_MODE`): the vector DB takes an exclusive single-writer lock and the
+REST API binds one port, so only one process can own them. To run the web UI and the Claude
+Code MCP at once, one process owns the DB and the other attaches as a thin client over REST.
+- `auto` (default) — own the DB if free, else attach as an MCP client
+- `backend` — own DB + REST, never MCP (`npm run serve`)
+- `mcp` — pure MCP client, requires a reachable backend (`BIG_MICHAEL_API` sets the URL)
+- `standalone` — classic single process (own DB + REST + MCP on stdio)
 
 ## Using from Claude Code
 
@@ -145,6 +154,8 @@ Each DyTopo round:
 | `src/integrations/clio.ts` | ClioClient — OAuth 2.0, token persistence, auto-refresh, 7 API methods, 4-region routing |
 | `src/tools/clio.ts` | 7 Clio tool definitions (list/get matters, documents, activities, notes, contacts) |
 | `src/mcp/server.ts` | MCP stdio server + Fastify REST API |
+| `src/backend/index.ts` | `LegalBackend` seam — `LocalBackend` (owns DB) / `RemoteBackend` (thin HTTP client) so MCP can run as a client of a separate owner |
+| `src/index.ts` | Entry point — also resolves the run mode (`BIG_MICHAEL_MODE`: auto/backend/mcp/standalone) |
 | `src/templates/*.json` | Task templates (due-diligence, dispute-resolution, etc.) |
 | `src/types.ts` | All types: AgentDefinition (jurisdictions), Task (jurisdiction), NosLegalTags |
 | `src/learning/index.ts` | RuVector Q-learning layer — LearningEngine + FastAgentDB for agent recruitment |

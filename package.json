@@ -9,6 +9,7 @@
     "build": "tsc && copyfiles -u 1 \"src/templates/*.json\" dist",
     "start": "node dist/index.js",
     "dev": "tsx watch --ignore \"**/.tasks.json\" --ignore \"**/audit.jsonl\" --ignore \"output/**\" --ignore \"data/**\" src/index.ts",
+    "serve": "cross-env BIG_MICHAEL_MODE=backend tsx watch --ignore \"**/.tasks.json\" --ignore \"**/audit.jsonl\" --ignore \"output/**\" --ignore \"data/**\" src/index.ts",
     "seed": "tsx src/scripts/seed.ts",
     "smoke-test": "cross-env ANTHROPIC_API_KEY=smoke-test OPENAI_API_KEY=smoke-test tsx src/scripts/smoke-test.ts",
     "test": "cross-env ANTHROPIC_API_KEY=test OPENAI_API_KEY=test tsx --test tests/unit.test.ts",

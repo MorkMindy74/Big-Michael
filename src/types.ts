@@ -302,6 +302,10 @@ export interface TimeEntry {
   billingUnits: number;
   /** ISO timestamp set when this entry has been pushed to a Clio matter as an activity. */
   clioSyncedAt?: string;
+  /** OCG compliance suggestions for this entry. */
+  ocgSuggestions?: OcgSuggestion[];
+  /** ISO timestamp of the last OCG compliance check run on this entry. */
+  ocgCheckedAt?: string;
 }
 
 /** Structured spreadsheet-style output for the `tabulate` workflow. */
@@ -473,6 +477,10 @@ export interface Client {
   /** Names of opposing/adverse parties — used for conflict-of-interest checks. */
   adversaries: string[];
   notes?: string;
+  /** ID of the OcgDocument for this client (if any). */
+  ocgId?: string;
+  /** Client voice/communication guide built from writing samples. */
+  voiceGuide?: ClientVoiceGuide;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -552,4 +560,56 @@ export interface EmbeddingResult {
   text: string;
   embedding: number[];
   model: string;
+}
+
+// ─── Outside Counsel Guidelines ───────────────────────────────────────────────
+
+export type OcgRuleCategory =
+  | "billing_increments"
+  | "entry_specificity"
+  | "prohibited_tasks"
+  | "rate_limits"
+  | "staffing"
+  | "description_format"
+  | "timing"
+  | "other";
+
+export interface OcgRule {
+  id: string;
+  category: OcgRuleCategory;
+  text: string;       // plain-English rule, ≤ 200 chars
+  severity: "hard" | "soft";  // hard = will reject billing; soft = style pref
+}
+
+export interface OcgDocument {
+  id: string;
+  clientId: string;
+  title: string;
+  rules: OcgRule[];
+  excerpt: string;    // first 500 chars of source text for display
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface OcgSuggestion {
+  ruleId: string;
+  ruleText: string;
+  category: OcgRuleCategory;
+  severity: "hard" | "soft";
+  issue: string;
+  suggestedDescription: string;
+  status: "pending" | "accepted" | "dismissed";
+}
+
+// ─── Client voice guide ───────────────────────────────────────────────────────
+
+export interface ClientVoiceGuide {
+  generatedAt: string;         // ISO timestamp
+  sampleCount: number;
+  preferredFormality: string;  // e.g. "formal", "business-casual"
+  communicationStyle: string;  // e.g. "concise bullet points", "narrative"
+  terminologyPreferences: string;
+  reportingPreferences: string;
+  signaturePatterns: string[];
+  injectionSnippet: string;    // pre-built prompt fragment
 }

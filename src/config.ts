@@ -166,6 +166,7 @@ export const Config = {
     timeFile: optional("TIME_FILE", ".time-entries.json"),
     /** Persisted Q-table for agent recruitment learning (RuVector LearningEngine). */
     learningFile: optional("LEARNING_FILE", ".qtable.json"),
+    ocgFile: optional("OCG_FILE", ".ocg.json"),
   },
 
   logging: {

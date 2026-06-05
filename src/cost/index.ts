@@ -38,7 +38,10 @@ export type CostContext =
   | "protocol_debate"  // adversarial debate (Opus)
   | "protocol_verify"  // verification pipeline (Haiku ×N)
   | "tone_analysis"    // LinkedIn tone analysis chain
-  | "classification";  // practice area / client / NOSLEGAL detection
+  | "classification"   // practice area / client / NOSLEGAL detection
+  | "ocg_extraction"   // OCG rule extraction from document
+  | "ocg_check"        // OCG billing compliance check on time entries
+  | "voice_analysis";  // client voice/communication guide analysis
 
 export interface CostEntry {
   id: string;

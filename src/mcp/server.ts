@@ -1187,41 +1187,72 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
   // Lawyers see only their own entries; partners see all.
   app.get("/time-entries", async (req) => {
     const user = getUser(req);
-    const { profileId, taskId, matterNumber, clientNumber, from, to } = req.query as Record<string, string>;
+    const { profileId, agentId, taskId, matterNumber, clientNumber, from, to, agentOnly } = req.query as Record<string, string>;
     const filter = {
       // Lawyers are restricted to their own entries; partners may filter by any profileId.
       profileId: isPartner(user) ? (profileId || undefined) : user?.profileId,
+      agentId: isPartner(user) ? (agentId || undefined) : undefined,
       taskId: taskId || undefined,
       matterNumber: matterNumber || undefined,
       clientNumber: clientNumber || undefined,
       from: from ? new Date(from) : undefined,
       to: to ? new Date(to) : undefined,
+      agentOnly: agentOnly === "true" ? true : agentOnly === "false" ? false : undefined,
     };
     return orchestrator.time.list(filter);
   });
 
+  /** GET /time-entries/agent-summary — per-agent billing totals. Partner only. */
+  app.get("/time-entries/agent-summary", async (req, reply) => {
+    if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
+    const { taskId, matterNumber, clientNumber, from, to } = req.query as Record<string, string>;
+    const entries = orchestrator.time.list({
+      taskId: taskId || undefined,
+      matterNumber: matterNumber || undefined,
+      clientNumber: clientNumber || undefined,
+      from: from ? new Date(from) : undefined,
+      to: to ? new Date(to) : undefined,
+      agentOnly: true,
+    });
+    const byAgent = new Map<string, { agentId: string; agentName: string; entries: number; billingUnits: number; billingAmountUsd: number }>();
+    for (const e of entries) {
+      if (!e.agentId) continue;
+      const key = e.agentId;
+      const existing = byAgent.get(key) ?? { agentId: e.agentId, agentName: e.agentName ?? e.agentId, entries: 0, billingUnits: 0, billingAmountUsd: 0 };
+      existing.entries++;
+      existing.billingUnits += e.billingUnits;
+      existing.billingAmountUsd += e.billingAmountUsd ?? 0;
+      byAgent.set(key, existing);
+    }
+    return Array.from(byAgent.values()).sort((a, b) => b.billingAmountUsd - a.billingAmountUsd);
+  });
+
   app.get("/time-entries/export.json", async (req, reply) => {
     if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
-    const { profileId, taskId, matterNumber, from, to } = req.query as Record<string, string>;
+    const { profileId, agentId, taskId, matterNumber, from, to, agentOnly } = req.query as Record<string, string>;
     const filter = {
       profileId: profileId || undefined,
+      agentId: agentId || undefined,
       taskId: taskId || undefined,
       matterNumber: matterNumber || undefined,
       from: from ? new Date(from) : undefined,
       to: to ? new Date(to) : undefined,
+      agentOnly: agentOnly === "true" ? true : agentOnly === "false" ? false : undefined,
     };
     return orchestrator.time.exportJson(filter);
   });
 
   app.get("/time-entries/export.csv", async (req, reply) => {
     if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
-    const { profileId, taskId, matterNumber, from, to } = req.query as Record<string, string>;
+    const { profileId, agentId, taskId, matterNumber, from, to, agentOnly } = req.query as Record<string, string>;
     const filter = {
       profileId: profileId || undefined,
+      agentId: agentId || undefined,
       taskId: taskId || undefined,
       matterNumber: matterNumber || undefined,
       from: from ? new Date(from) : undefined,
       to: to ? new Date(to) : undefined,
+      agentOnly: agentOnly === "true" ? true : agentOnly === "false" ? false : undefined,
     };
     reply.header("Content-Type", "text/csv; charset=utf-8");
     reply.header("Content-Disposition", "attachment; filename=\"time-entries.csv\"");

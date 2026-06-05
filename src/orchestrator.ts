@@ -36,6 +36,7 @@ import { TimeStore } from "./time/index.js";
 import { OcgStore } from "./ocg/index.js";
 import { agentLearning } from "./learning/index.js";
 import { DyTopoEngine } from "./dytopo/engine.js";
+import type { AgentBillingCtx } from "./dytopo/engine.js";
 import { InterRoundMemoryStore } from "./memory/index.js";
 import { KnowledgeStore } from "./knowledge/index.js";
 import { TemplateStore } from "./templates/store.js";
@@ -678,15 +679,24 @@ export class Orchestrator {
     const goal = await this.generateRoundGoal(task, phase);
     goal.round = ++task.currentRound;
 
-    // Look up tone profile from the task's primary lawyer (creator first, then first assignee)
-    const lawyerTone = (() => {
-      const profileId = task.createdByProfileId ?? task.assignedLawyerIds?.[0];
-      if (!profileId) return undefined;
-      return this.profiles.get(profileId)?.toneProfile;
-    })();
+    // Look up tone profile and billing attribution from the task's primary lawyer
+    const primaryProfileId = task.createdByProfileId ?? task.assignedLawyerIds?.[0];
+    const primaryProfile = primaryProfileId ? this.profiles.get(primaryProfileId) : undefined;
+    const lawyerTone = primaryProfile?.toneProfile;
+
+    // Build agent billing context when billing is enabled
+    const billingCtx: AgentBillingCtx | undefined = Config.agentBilling.enabled
+      ? {
+          timeStore: this.time,
+          responsibleLawyerId: primaryProfileId,
+          responsibleLawyerName: primaryProfile?.name,
+          matterNumber: task.matterNumber,
+          clientNumber: task.clientNumber,
+        }
+      : undefined;
 
     // Run DyTopo round
-    const roundState = await this.engine.runRound(task, goal, lawyerTone);
+    const roundState = await this.engine.runRound(task, goal, lawyerTone, billingCtx);
     task.rounds.push(roundState);
 
     // Build source-text map for citation gate (from knowledge store)

@@ -23,11 +23,14 @@ export type { TimeEntry, TimeEventType };
 
 export interface TimeFilter {
   profileId?: string;
+  agentId?: string;
   taskId?: string;
   matterNumber?: string;
   clientNumber?: string;
   from?: Date;
   to?: Date;
+  /** When true, only return agent_work entries. When false, exclude them. Omit for all. */
+  agentOnly?: boolean;
 }
 
 const SIX_MIN_MS = 6 * 60 * 1000; // 360 000 ms
@@ -83,6 +86,9 @@ export class TimeStore {
     entry.endedAt = endedAt;
     entry.durationMs = endedAt.getTime() - entry.startedAt.getTime();
     entry.billingUnits = Math.ceil(entry.durationMs / SIX_MIN_MS);
+    if (entry.billingRate) {
+      entry.billingAmountUsd = parseFloat((entry.billingUnits * 0.1 * entry.billingRate).toFixed(4));
+    }
     this.persist().catch((err) => logger.warn("Failed to persist time entries", { error: (err as Error).message }));
     return entry;
   }
@@ -166,22 +172,26 @@ export class TimeStore {
   /** CSV export with headers. */
   exportCsv(filter?: TimeFilter): string {
     const rows = this.list(filter);
-    const header = "id,profileId,profileName,taskId,matterNumber,clientNumber,description,event,startedAt,endedAt,durationMs,billingUnits,clioSyncedAt";
-    const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""').replace(/[\r\n]+/g, " ")}"`;  // also strip newlines to prevent CSV row injection
+    const header = "id,event,profileId,profileName,agentId,agentName,taskId,matterNumber,clientNumber,description,startedAt,endedAt,durationMs,billingUnits,billingRate,billingAmountUsd,clioSyncedAt";
+    const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""').replace(/[\r\n]+/g, " ")}"`;
     const lines = rows.map((e) =>
       [
         esc(e.id),
-        esc(e.profileId),
-        esc(e.profileName),
+        esc(e.event),
+        esc(e.profileId ?? ""),
+        esc(e.profileName ?? ""),
+        esc(e.agentId ?? ""),
+        esc(e.agentName ?? ""),
         esc(e.taskId),
         esc(e.matterNumber ?? ""),
         esc(e.clientNumber ?? ""),
         esc(e.description),
-        esc(e.event),
         esc(e.startedAt.toISOString()),
         esc(e.endedAt?.toISOString() ?? ""),
         esc(e.durationMs),
         esc(e.billingUnits),
+        esc(e.billingRate ?? ""),
+        esc(e.billingAmountUsd ?? ""),
         esc(e.clioSyncedAt ?? ""),
       ].join(","),
     );
@@ -203,7 +213,11 @@ export class TimeStore {
 
 function matchesFilter(entry: TimeEntry, filter?: TimeFilter): boolean {
   if (!filter) return true;
+  if (filter.agentOnly === true && entry.event !== "agent_work") return false;
+  if (filter.agentOnly === false && entry.event === "agent_work") return false;
+  // profileId filter: match lawyer entries for that profile OR agent entries attributed to them
   if (filter.profileId && entry.profileId !== filter.profileId) return false;
+  if (filter.agentId && entry.agentId !== filter.agentId) return false;
   if (filter.taskId && entry.taskId !== filter.taskId) return false;
   if (filter.matterNumber && entry.matterNumber !== filter.matterNumber) return false;
   if (filter.clientNumber && entry.clientNumber !== filter.clientNumber) return false;

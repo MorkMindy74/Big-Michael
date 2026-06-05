@@ -186,6 +186,26 @@ export const Config = {
     redisUrl: optional("QUEUE_REDIS_URL", "redis://localhost:6379"),
   },
 
+  // ─── Agent billing ────────────────────────────────────────────────────────
+  // When enabled, each AI agent records a time entry for its work so firms can
+  // bill clients for AI-assisted research and drafting.
+  //
+  // Rate resolution order (first non-zero wins):
+  //   1. agent.billingRate in AgentDefinition (per-agent override)
+  //   2. AGENT_BILLING_RATE_T{tier} (per-tier default)
+  //   3. AGENT_BILLING_RATE_DEFAULT (catch-all)
+  //   → Rate = 0 → no entry created (agent is non-billable)
+  //
+  // Defaults to 0 everywhere — firms opt in by setting their own rates.
+  agentBilling: {
+    enabled: optional("AGENT_BILLING_ENABLED", "true") === "true",
+    defaultRate: parseFloat(optional("AGENT_BILLING_RATE_DEFAULT", "0")),
+    rateT0: parseFloat(optional("AGENT_BILLING_RATE_T0", "0")), // root orchestrator
+    rateT1: parseFloat(optional("AGENT_BILLING_RATE_T1", "0")), // domain managers
+    rateT2: parseFloat(optional("AGENT_BILLING_RATE_T2", "0")), // specialist agents
+    rateT3: parseFloat(optional("AGENT_BILLING_RATE_T3", "0")), // tool agents
+  },
+
   logging: {
     level: optional("LOG_LEVEL", "info"),
   },

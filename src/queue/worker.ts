@@ -191,7 +191,7 @@ async function handleOcgBulkCheck(
 
   const entries = orch.time
     .list({ clientNumber })
-    .filter((e) => e.endedAt && !e.ocgSuggestions);
+    .filter((e) => e.endedAt && !e.ocgSuggestions && !e.agentId);
 
   if (!entries.length) {
     logger.info("ocg_bulk_check: no eligible entries", { clientNumber });

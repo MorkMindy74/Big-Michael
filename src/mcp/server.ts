@@ -1142,6 +1142,33 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     return prediction;
   });
 
+  // ── Conflict graph ───────────────────────────────────────────────────────────
+
+  app.post("/graph/sync", async (req, reply) => {
+    if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
+    if (!orchestrator.conflictGraph.isEnabled()) return reply.status(503).send({ error: "TypeDB not configured (set TYPEDB_URL)" });
+    await orchestrator.conflictGraph.sync(orchestrator.clients, orchestrator.time);
+    return { ok: true, message: "Conflict graph synced" };
+  });
+
+  app.get("/clients/:id/conflicts", async (req, reply) => {
+    const user = getUser(req);
+    if (!isPartner(user)) return reply.status(403).send({ error: "Partner role required" });
+    if (!orchestrator.conflictGraph.isEnabled()) return reply.status(503).send({ error: "TypeDB not configured" });
+    const { id } = req.params as { id: string };
+    const conflicts = await orchestrator.conflictGraph.checkClient(id);
+    return conflicts;
+  });
+
+  app.post("/clients/check-conflict-graph", async (req, reply) => {
+    if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
+    if (!orchestrator.conflictGraph.isEnabled()) return reply.status(503).send({ error: "TypeDB not configured" });
+    const { clientId, adversaryIds } = req.body as { clientId: string; adversaryIds: string[] };
+    if (!clientId) return reply.status(400).send({ error: "clientId required" });
+    const conflicts = await orchestrator.conflictGraph.checkNewMatter(clientId, adversaryIds ?? []);
+    return { conflicts, hasConflict: conflicts.length > 0 };
+  });
+
   // ── Admin settings (presentation mode, DyTopo depth, debate, DocuSeal) ──────
   // Both GET and PUT are partner-only: GET exposes the DocuSeal URL and
   // enabled state; PUT can redirect DocuSeal requests (SSRF) or weaken

@@ -56,6 +56,7 @@ import { jobQueue } from "./queue/index.js";
 import { isOllamaModel, isLocalModel } from "./providers/index.js";
 import { BudgetMonitor } from "./budget/index.js";
 import { BudgetPredictor } from "./budget/predictor.js";
+import { ConflictGraph } from "./graph/conflict.js";
 import type {
   Task,
   WorkflowType,
@@ -131,6 +132,7 @@ export class Orchestrator {
   readonly budgetMonitor: BudgetMonitor;
   readonly budgetPredictor: BudgetPredictor;
   readonly preBills: PreBillStore;
+  readonly conflictGraph: ConflictGraph;
 
   private readonly tasks: Map<string, Task> = new Map();
   private readonly gateEmitter = new EventEmitter();
@@ -151,6 +153,7 @@ export class Orchestrator {
     this.budgetMonitor = new BudgetMonitor(this.time, this.clients);
     this.budgetPredictor = new BudgetPredictor();
     this.preBills = new PreBillStore(Config.persistence.preBillsFile);
+    this.conflictGraph = new ConflictGraph();
   }
 
   async init(): Promise<void> {
@@ -161,6 +164,7 @@ export class Orchestrator {
     await this.time.init();
     await this.ocg.init();
     await this.preBills.init();
+    await this.conflictGraph.connect();
     await agentLearning.init();
     await Promise.all([
       this.registry.init(),

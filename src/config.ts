@@ -367,4 +367,10 @@ export const Config = {
     environment: optional("INFISICAL_ENV", "production"),
     path: optional("INFISICAL_PATH", "/"),
   },
+
+  // TypeDB conflict graph (optional — enables multi-hop conflict detection)
+  // docker compose --profile graph up -d
+  typedb: {
+    url: process.env.TYPEDB_URL ?? "",   // e.g. "0.0.0.0:1729"; empty = disabled
+  },
 } as const;

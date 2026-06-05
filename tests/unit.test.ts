@@ -896,3 +896,68 @@ test("BudgetPredictor: completionPct caps at 99 for open matters", () => {
   // Even though spent > estimated, completionPct should cap at 99
   assert.ok(result!.completionPct <= 99, `completionPct ${result!.completionPct} must not exceed 99`);
 });
+
+// ─── ConflictGraph: TypeDB optional integration ───────────────────────────────
+
+import { ConflictGraph } from "../src/graph/conflict.js";
+import type { ConflictReport } from "../src/types.js";
+import { syncConflictGraph } from "../src/graph/sync.js";
+
+test("ConflictGraph: isEnabled() returns false when TYPEDB_URL is unset", () => {
+  // TYPEDB_URL is not set in the test environment (no typedb env var in cross-env)
+  const g = new ConflictGraph();
+  assert.equal(g.isEnabled(), false);
+});
+
+test("ConflictGraph: connect() is a no-op when disabled (returns without error)", async () => {
+  const g = new ConflictGraph();
+  // Should resolve cleanly with no TypeDB running
+  await assert.doesNotReject(() => g.connect());
+});
+
+test("ConflictGraph: checkClient() returns [] when disabled", async () => {
+  const g = new ConflictGraph();
+  const result = await g.checkClient("client-abc");
+  assert.deepEqual(result, []);
+});
+
+test("ConflictGraph: checkNewMatter() returns [] when disabled", async () => {
+  const g = new ConflictGraph();
+  const result = await g.checkNewMatter("client-abc", ["adv-1", "adv-2"]);
+  assert.deepEqual(result, []);
+});
+
+test("ConflictReport: shape matches expected interface", () => {
+  // Verify the type is structurally correct — a full ConflictReport object
+  const report: ConflictReport = {
+    clientAId:     "client-001",
+    clientAName:   "Acme Corp",
+    clientBId:     "client-002",
+    clientBName:   "Rival Ltd",
+    matterANumber: "M-2024-001",
+    matterBNumber: "M-2024-002",
+    conflictPath:  "direct",
+    detectedAt:    new Date().toISOString(),
+  };
+  assert.equal(typeof report.clientAId, "string");
+  assert.equal(typeof report.clientAName, "string");
+  assert.equal(typeof report.clientBId, "string");
+  assert.equal(typeof report.clientBName, "string");
+  assert.equal(typeof report.matterANumber, "string");
+  assert.equal(typeof report.matterBNumber, "string");
+  assert.equal(typeof report.conflictPath, "string");
+  assert.equal(typeof report.detectedAt, "string");
+});
+
+test("syncConflictGraph: no-op when graph is disabled", async () => {
+  const g = new ConflictGraph();
+  // Stub stores — syncConflictGraph only calls graph.sync() which is a no-op
+  const stubClients = {
+    list: () => [],
+    get: () => undefined,
+    getByClientNumber: () => undefined,
+  } as unknown as import("../src/clients/index.js").ClientStore;
+  const stubTime = {} as unknown as import("../src/time/index.js").TimeStore;
+  // Must resolve without error
+  await assert.doesNotReject(() => syncConflictGraph(g, stubClients, stubTime));
+});

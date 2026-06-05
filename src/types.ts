@@ -706,6 +706,7 @@ export interface ClientVoiceGuide {
   signaturePatterns: string[];
   injectionSnippet: string;    // pre-built prompt fragment
 }
+
 // ── Budget prediction ───────────────────────────────────────────────────────
 export interface BudgetPrediction {
   matterNumber: string;
@@ -721,4 +722,16 @@ export interface BudgetPrediction {
   p25FinalCost: number;
   p75FinalCost: number;
   basedOn: "practice_area+jurisdiction" | "practice_area" | "all_matters";
+}
+
+// ── Conflict graph ──────────────────────────────────────────────────────────
+export interface ConflictReport {
+  clientAId: string;
+  clientAName: string;
+  clientBId: string;
+  clientBName: string;
+  matterANumber: string;
+  matterBNumber: string;
+  conflictPath: string;  // e.g. "direct" | "via-subsidiary" | "inferred"
+  detectedAt: string;    // ISO
 }

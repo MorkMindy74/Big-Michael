@@ -321,6 +321,10 @@ export interface TimeEntry {
   ocgSuggestions?: OcgSuggestion[];
   /** ISO timestamp of the last OCG compliance check run on this entry. */
   ocgCheckedAt?: string;
+  /** UTBMS Phase/Task code assigned on close, e.g. "L210" (Pleadings). */
+  utbmsTaskCode?: string;
+  /** UTBMS Activity code assigned on close, e.g. "A103" (Draft/Revise). */
+  utbmsActivityCode?: string;
 }
 
 /** Structured spreadsheet-style output for the `tabulate` workflow. */

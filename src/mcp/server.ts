@@ -51,6 +51,7 @@ import { ocgStore } from "../ocg/index.js";
 import { analyzeClientVoice } from "../services/clientVoiceAnalyzer.js";
 import { jobQueue } from "../queue/index.js";
 import { startWorker } from "../queue/worker.js";
+import { exportLedes1998B } from "../billing/ledes.js";
 
 // ─── Tool schemas ─────────────────────────────────────────────────────────────
 
@@ -1304,12 +1305,25 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     return orchestrator.time.exportCsv(filter);
   });
 
+  app.get("/time-entries/export.ledes", async (req, reply) => {
+    if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
+    const { matterNumber, clientNumber, from, to, invoiceNumber } = req.query as Record<string, string>;
+    if (!matterNumber && !clientNumber) return reply.status(400).send({ error: "matterNumber or clientNumber required" });
+    const entries = orchestrator.time.list({
+      matterNumber: matterNumber || undefined,
+      clientNumber: clientNumber || undefined,
+      from: from ? new Date(from) : undefined,
+      to: to ? new Date(to) : undefined,
+    }).filter((e) => e.endedAt);
+    const invoice = invoiceNumber || `${matterNumber ?? clientNumber}-${new Date().toISOString().slice(0, 10)}`;
+    const ledes = exportLedes1998B(entries, { invoiceNumber: invoice, lawFirmId: "Big Michael" });
+    reply.header("Content-Type", "application/edi-x12");
+    reply.header("Content-Disposition", `attachment; filename="${invoice}.ledes"`);
+    return ledes;
+  });
+
   // ── OCG time-entry compliance ─────────────────────────────────────────────────
 
-  /**
-   * GET /time-entries/suggestions — list entries with pending OCG suggestions.
-   * Partners see all; lawyers see only their own.
-   */
   app.get("/time-entries/suggestions", async (req) => {
     const user = getUser(req);
     const { profileId, clientNumber, matterNumber } = req.query as Record<string, string>;
@@ -1321,10 +1335,6 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     return orchestrator.time.listWithSuggestions(filter);
   });
 
-  /**
-   * POST /time-entries/run-ocg-check — run OCG compliance check on a batch
-   * of time entries for a given client or matter. Partner only.
-   */
   app.post("/time-entries/run-ocg-check", async (req, reply) => {
     if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
     const { clientNumber, matterNumber, limit } = req.body as { clientNumber?: string; matterNumber?: string; limit?: number };
@@ -1335,7 +1345,6 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
       matterNumber: matterNumber || undefined,
     }).slice(0, cap);
 
-    // Group entries by clientId (resolved via clientNumber on the entry)
     const byClientId = new Map<string, typeof allEntries>();
     for (const entry of allEntries) {
       if (!entry.clientNumber) continue;
@@ -1369,14 +1378,12 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     return { checked, withSuggestions };
   });
 
-  /** POST /time-entries/:id/suggestions/accept — accept a suggestion (rewrites description). */
   app.post("/time-entries/:id/suggestions/accept", async (req, reply) => {
     const user = getUser(req);
     const { id } = req.params as { id: string };
     const { ruleId } = req.body as { ruleId: string };
     if (!ruleId) return reply.status(400).send({ error: "ruleId is required" });
 
-    // Find the entry and check access (partner or owner)
     const entries = orchestrator.time.list();
     const entry = entries.find((e) => e.id === id);
     if (!entry) return reply.status(404).send({ error: "Time entry not found" });
@@ -1386,7 +1393,6 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
 
     const updated = orchestrator.time.acceptSuggestion(id, ruleId);
     if (!updated) return reply.status(404).send({ error: "Suggestion not found" });
-    // Track acceptance for per-rule hit rate stats.
     if (entry.clientNumber) {
       const client = orchestrator.clients.list().find((c) => c.clientNumber === entry.clientNumber);
       if (client) ocgStore.recordOutcome(client.id, ruleId, "accepted");
@@ -1394,7 +1400,6 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     return updated;
   });
 
-  /** POST /time-entries/:id/suggestions/dismiss — dismiss a suggestion. */
   app.post("/time-entries/:id/suggestions/dismiss", async (req, reply) => {
     const user = getUser(req);
     const { id } = req.params as { id: string };
@@ -1410,7 +1415,6 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
 
     const updated = orchestrator.time.dismissSuggestion(id, ruleId);
     if (!updated) return reply.status(404).send({ error: "Suggestion not found" });
-    // Track dismissal for per-rule hit rate stats.
     if (entry.clientNumber) {
       const client = orchestrator.clients.list().find((c) => c.clientNumber === entry.clientNumber);
       if (client) ocgStore.recordOutcome(client.id, ruleId, "dismissed");
@@ -1418,13 +1422,6 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     return updated;
   });
 
-  /**
-   * GET /clients/:id/ocg/stats
-   *
-   * Per-rule violation counts and correction-acceptance rates for a client's OCG.
-   * Sorted by violation frequency — shows which rules cause the most friction.
-   * Partner only.
-   */
   app.get("/clients/:id/ocg/stats", async (req, reply) => {
     if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
     const { id } = req.params as { id: string };

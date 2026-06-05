@@ -17,6 +17,7 @@ import { randomUUID } from "crypto";
 import { readFile, writeFile, rename } from "fs/promises";
 import { Config } from "../config.js";
 import { logger } from "../logger.js";
+import { classifyUtbms } from "../billing/utbms.js";
 import type { TimeEntry, TimeEventType, OcgSuggestion } from "../types.js";
 
 export type { TimeEntry, TimeEventType };
@@ -90,6 +91,11 @@ export class TimeStore {
       entry.billingAmountUsd = parseFloat((entry.billingUnits * 0.1 * entry.billingRate).toFixed(4));
     }
     this.persist().catch((err) => logger.warn("Failed to persist time entries", { error: (err as Error).message }));
+    classifyUtbms(entry.description ?? entry.event, entry.event).then(({ taskCode, activityCode }) => {
+      entry.utbmsTaskCode = taskCode;
+      entry.utbmsActivityCode = activityCode;
+      this.persist().catch((err) => logger.warn("Failed to persist time entries after UTBMS", { error: (err as Error).message }));
+    }).catch(() => { /* classification failure is non-fatal */ });
     return entry;
   }
 
@@ -172,7 +178,7 @@ export class TimeStore {
   /** CSV export with headers. */
   exportCsv(filter?: TimeFilter): string {
     const rows = this.list(filter);
-    const header = "id,event,profileId,profileName,agentId,agentName,taskId,matterNumber,clientNumber,description,startedAt,endedAt,durationMs,billingUnits,billingRate,billingAmountUsd,clioSyncedAt";
+    const header = "id,event,profileId,profileName,agentId,agentName,taskId,matterNumber,clientNumber,description,startedAt,endedAt,durationMs,billingUnits,billingRate,billingAmountUsd,utbmsTaskCode,utbmsActivityCode,clioSyncedAt";
     const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""').replace(/[\r\n]+/g, " ")}"`;
     const lines = rows.map((e) =>
       [
@@ -192,6 +198,8 @@ export class TimeStore {
         esc(e.billingUnits),
         esc(e.billingRate ?? ""),
         esc(e.billingAmountUsd ?? ""),
+        esc(e.utbmsTaskCode ?? ""),
+        esc(e.utbmsActivityCode ?? ""),
         esc(e.clioSyncedAt ?? ""),
       ].join(","),
     );

@@ -4,9 +4,17 @@
 /**
  * OcgStore — persists and queries Outside Counsel Guidelines documents.
  *
- * Extracts billing rules from OCG text via a Haiku call, then checks time
- * entries against those rules (also via Haiku) to produce OcgSuggestion
- * arrays that lawyers can accept or dismiss in the UI.
+ * Two-phase compliance check per time entry:
+ *   1. Mechanical — billing_increments and timing rules are checked with pure
+ *      math / date arithmetic (no AI). Fast, deterministic, free.
+ *   2. Semantic   — all other rules are evaluated by Haiku. Each OcgRule is
+ *      passed as a structured {id, category, text, severity} JSON object so
+ *      violations map back to specific rule IDs — not a text dump injected
+ *      into a prompt.
+ *
+ * The compliance check runs independently of description generation.
+ * The worker generates a description first, then fires checkEntry() against
+ * the rule dictionary as a separate pass.
  */
 
 import { randomUUID } from "node:crypto";
@@ -16,7 +24,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { Config } from "../config.js";
 import { logger } from "../logger.js";
 import { costStore, calcCostUsd } from "../cost/index.js";
-import type { OcgDocument, OcgRule, OcgRuleCategory, OcgSuggestion, TimeEntry } from "../types.js";
+import type { OcgDocument, OcgRule, OcgRuleCategory, OcgRuleStat, OcgSuggestion, TimeEntry } from "../types.js";
 
 // ─── Sanitisation ─────────────────────────────────────────────────────────────
 
@@ -30,9 +38,82 @@ function sanitizeText(s: string): string {
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
 }
 
+// ─── Mechanical rule checkers ─────────────────────────────────────────────────
+
+function makeSuggestion(rule: OcgRule, entry: TimeEntry, issue: string): OcgSuggestion {
+  return {
+    ruleId: rule.id,
+    ruleText: rule.text,
+    category: rule.category,
+    severity: rule.severity,
+    issue,
+    suggestedDescription: entry.description,
+    status: "pending",
+  };
+}
+
+/**
+ * Evaluate billing_increments and timing rules with pure arithmetic.
+ * No AI call — violations are unambiguous if the rule has a parseable threshold.
+ */
+function checkMechanically(entry: TimeEntry, rules: OcgRule[]): OcgSuggestion[] {
+  const violations: OcgSuggestion[] = [];
+  const entryMs = entry.durationMs;
+  const entryAgeMs =
+    entry.startedAt instanceof Date ? Date.now() - entry.startedAt.getTime() : 0;
+
+  for (const rule of rules) {
+    const t = rule.text.toLowerCase();
+
+    if (rule.category === "billing_increments" && entryMs > 0) {
+      // Parse minimum: "0.1 hour", "6-minute minimum", "one-tenth hour", "1/10 hour"
+      let minHours = 0;
+      const hMatch = t.match(/(\d+(?:\.\d+)?)\s*-?\s*h(?:ou)?r/);
+      const mMatch = t.match(/(\d+(?:\.\d+)?)\s*-?\s*min(?:ute)?/);
+      if (hMatch) minHours = parseFloat(hMatch[1]);
+      else if (mMatch) minHours = parseFloat(mMatch[1]) / 60;
+      else if (t.includes("one-tenth") || t.includes("1/10")) minHours = 0.1;
+
+      if (minHours > 0) {
+        const actualHours = entryMs / 3_600_000;
+        if (actualHours < minHours) {
+          violations.push(
+            makeSuggestion(
+              rule,
+              entry,
+              `Duration ${actualHours.toFixed(2)}h below required minimum ${minHours}h`,
+            ),
+          );
+        }
+      }
+    }
+
+    if (rule.category === "timing" && entryAgeMs > 0) {
+      // Parse max age: "within 30 days", "no older than 60 days"
+      const dMatch = t.match(/(\d+)\s*days?/);
+      if (dMatch) {
+        const maxDays = parseInt(dMatch[1]);
+        const ageDays = entryAgeMs / 86_400_000;
+        if (ageDays > maxDays) {
+          violations.push(
+            makeSuggestion(
+              rule,
+              entry,
+              `Entry is ${Math.floor(ageDays)} days old; must be submitted within ${maxDays} days`,
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  return violations;
+}
+
 // ─── Store ────────────────────────────────────────────────────────────────────
 
 const HAIKU_MODEL = "claude-haiku-4-5-20251001";
+const SEMANTIC_BATCH_SIZE = 8;
 
 export class OcgStore {
   private readonly path = Config.persistence.ocgFile;
@@ -115,7 +196,6 @@ Respond with ONLY a valid JSON array, no markdown, no prose:
     const rawText = response.content[0].type === "text" ? response.content[0].text : "[]";
     let rawRules: Array<{ category: string; text: string; severity: string }> = [];
     try {
-      // Strip markdown fences if present
       const cleaned = rawText.replace(/```(?:json)?/gi, "").trim();
       const start = cleaned.indexOf("[");
       const end = cleaned.lastIndexOf("]");
@@ -160,113 +240,235 @@ Respond with ONLY a valid JSON array, no markdown, no prose:
     return doc;
   }
 
+  // ─── Single-entry structured compliance check ─────────────────────────────
+
   /**
-   * Check a set of time entries against an OCG document's rules.
-   * Processes entries in batches of 5; returns a Map<entryId, OcgSuggestion[]>.
+   * Check one time entry against all rules in an OCG document.
+   *
+   * Pass 1 — Mechanical (no AI):
+   *   billing_increments  → duration math
+   *   timing              → age-in-days math
+   *
+   * Pass 2 — Semantic (Haiku, batches of SEMANTIC_BATCH_SIZE rules):
+   *   All other categories. Rules are passed as structured JSON objects
+   *   {id, category, text, severity} — not a text dump. Violations are
+   *   returned keyed by ruleId, so each maps back to a specific OcgRule.
+   *
+   * Returns OcgSuggestion[] — empty if the entry passes everything.
+   */
+  async checkEntry(entry: TimeEntry, ocgDoc: OcgDocument): Promise<OcgSuggestion[]> {
+    if (!ocgDoc.rules.length) return [];
+
+    const MECHANICAL: OcgRuleCategory[] = ["billing_increments", "timing"];
+    const mechanicalRules = ocgDoc.rules.filter((r) => MECHANICAL.includes(r.category));
+    const semanticRules = ocgDoc.rules.filter((r) => !MECHANICAL.includes(r.category));
+
+    const mechanical = checkMechanically(entry, mechanicalRules);
+    const semantic = await this.checkSemantically(entry, semanticRules);
+
+    return [...mechanical, ...semantic];
+  }
+
+  private async checkSemantically(
+    entry: TimeEntry,
+    rules: OcgRule[],
+  ): Promise<OcgSuggestion[]> {
+    if (!rules.length) return [];
+
+    const ruleDict = new Map(rules.map((r) => [r.id, r]));
+    const suggestions: OcgSuggestion[] = [];
+    const anthropic = new Anthropic({ apiKey: Config.anthropic.apiKey });
+
+    for (let i = 0; i < rules.length; i += SEMANTIC_BATCH_SIZE) {
+      const batch = rules.slice(i, i + SEMANTIC_BATCH_SIZE);
+      const batchSuggestions = await this.evaluateRuleBatch(entry, batch, ruleDict, anthropic);
+      suggestions.push(...batchSuggestions);
+    }
+
+    return suggestions;
+  }
+
+  private async evaluateRuleBatch(
+    entry: TimeEntry,
+    rules: OcgRule[],
+    ruleDict: Map<string, OcgRule>,
+    anthropic: Anthropic,
+  ): Promise<OcgSuggestion[]> {
+    const entryData = {
+      description: entry.description || "(no description)",
+      durationHours: (entry.durationMs / 3_600_000).toFixed(2),
+      event: entry.event,
+      billingUnits: entry.billingUnits,
+    };
+
+    const rulesData = rules.map((r) => ({
+      id: r.id,
+      category: r.category,
+      text: r.text,
+      severity: r.severity,
+    }));
+
+    const prompt = `You are an Outside Counsel Guidelines (OCG) compliance checker.
+
+Evaluate the time entry against each rule in the RULES array.
+Return ONLY rules that are violated. Skip rules the entry already satisfies.
+
+TIME ENTRY:
+${JSON.stringify(entryData)}
+
+RULES (each object has a unique "id" field):
+${JSON.stringify(rulesData, null, 2)}
+
+For each violated rule return an object with EXACTLY these fields:
+{
+  "ruleId": "<exact id value from the rule object>",
+  "issue": "<what the entry does wrong, max 120 chars>",
+  "suggestedDescription": "<rewritten description that would comply, max 300 chars>"
+}
+
+Return a JSON array. Use [] if no violations. ONLY the array — no markdown, no prose.`;
+
+    const t0 = Date.now();
+    let responseText = "[]";
+    try {
+      const response = await anthropic.messages.create({
+        model: HAIKU_MODEL,
+        max_tokens: 1024,
+        messages: [{ role: "user", content: prompt }],
+      });
+      const durationMs = Date.now() - t0;
+      costStore.record({
+        model: HAIKU_MODEL,
+        provider: "anthropic",
+        inputTokens: response.usage.input_tokens,
+        outputTokens: response.usage.output_tokens,
+        costUsd: calcCostUsd(HAIKU_MODEL, response.usage.input_tokens, response.usage.output_tokens),
+        estimatedWh: null,
+        estimatedWatts: null,
+        durationMs,
+        context: "ocg_check",
+      });
+      responseText = response.content[0].type === "text" ? response.content[0].text : "[]";
+    } catch (err) {
+      logger.warn("OCG semantic check failed", { error: (err as Error).message });
+      return [];
+    }
+
+    type RawViolation = { ruleId?: string; issue?: string; suggestedDescription?: string };
+    let rawViolations: RawViolation[] = [];
+    try {
+      const cleaned = responseText.replace(/```(?:json)?/gi, "").trim();
+      const start = cleaned.indexOf("[");
+      const end = cleaned.lastIndexOf("]");
+      if (start !== -1 && end !== -1) {
+        rawViolations = JSON.parse(cleaned.slice(start, end + 1));
+      }
+    } catch {
+      logger.warn("OCG semantic check parse error");
+      return [];
+    }
+
+    const suggestions: OcgSuggestion[] = [];
+    for (const v of rawViolations) {
+      if (!v.ruleId || !v.issue) continue;
+      const rule = ruleDict.get(v.ruleId);
+      if (!rule) continue;
+      suggestions.push({
+        ruleId: rule.id,
+        ruleText: rule.text,
+        category: rule.category,
+        severity: rule.severity,
+        issue: String(v.issue).trim().slice(0, 120),
+        suggestedDescription: String(v.suggestedDescription ?? "").trim().slice(0, 300),
+        status: "pending",
+      });
+    }
+
+    return suggestions;
+  }
+
+  // ─── Batch check (backward compat) ───────────────────────────────────────
+
+  /**
+   * Check multiple entries against an OCG document.
+   * @deprecated Use checkEntry() per-entry in new code.
    */
   async checkEntries(
     entries: TimeEntry[],
     ocgDoc: OcgDocument,
   ): Promise<Map<string, OcgSuggestion[]>> {
     const result = new Map<string, OcgSuggestion[]>();
-    if (!entries.length || !ocgDoc.rules.length) return result;
-
-    const client = new Anthropic({ apiKey: Config.anthropic.apiKey });
-    const BATCH_SIZE = 5;
-
-    for (let i = 0; i < entries.length; i += BATCH_SIZE) {
-      const batch = entries.slice(i, i + BATCH_SIZE);
-      const rulesText = ocgDoc.rules
-        .map((r, idx) => `${idx + 1}. [${r.severity.toUpperCase()}/${r.category}] ${r.text}`)
-        .join("\n");
-      const entriesText = batch
-        .map((e) => `ID:${e.id.slice(0, 8)} | ${e.startedAt instanceof Date ? e.startedAt.toISOString().slice(0, 10) : String(e.startedAt).slice(0, 10)} | ${(e.durationMs / 3_600_000).toFixed(2)}h | ${e.profileName} | ${e.description}`)
-        .join("\n");
-
-      const prompt = `You are a billing compliance reviewer. Check these time entries against OCG rules.
-Return violations ONLY for entries that actually violate a rule.
-
-OCG rules:
-${rulesText}
-
-Time entries:
-${entriesText}
-
-For each violating entry, provide:
-{"entryId":"ID prefix","violations":[{"ruleIndex":1,"issue":"what is wrong","suggestedDescription":"rewritten entry"}]}
-
-Return a JSON array ([] if all compliant):`;
-
-      const t0 = Date.now();
-      let responseText = "[]";
-      try {
-        const response = await client.messages.create({
-          model: HAIKU_MODEL,
-          max_tokens: 2048,
-          messages: [{ role: "user", content: prompt }],
-        });
-        const durationMs = Date.now() - t0;
-        const inputTokens = response.usage.input_tokens;
-        const outputTokens = response.usage.output_tokens;
-        costStore.record({
-          model: HAIKU_MODEL,
-          provider: "anthropic",
-          inputTokens,
-          outputTokens,
-          costUsd: calcCostUsd(HAIKU_MODEL, inputTokens, outputTokens),
-          estimatedWh: null,
-          estimatedWatts: null,
-          durationMs,
-          context: "ocg_check",
-        });
-        responseText = response.content[0].type === "text" ? response.content[0].text : "[]";
-      } catch (err) {
-        logger.warn("OCG check Haiku call failed", { error: (err as Error).message });
-        continue;
-      }
-
-      let violations: Array<{ entryId: string; violations: Array<{ ruleIndex: number; issue: string; suggestedDescription: string }> }> = [];
-      try {
-        const cleaned = responseText.replace(/```(?:json)?/gi, "").trim();
-        const start = cleaned.indexOf("[");
-        const end = cleaned.lastIndexOf("]");
-        if (start !== -1 && end !== -1) {
-          violations = JSON.parse(cleaned.slice(start, end + 1));
-        }
-      } catch {
-        logger.warn("OCG check parse error", { batchIndex: i });
-      }
-
-      for (const v of violations) {
-        if (!v.entryId || !Array.isArray(v.violations)) continue;
-        const prefix = v.entryId.slice(0, 8);
-        const entry = batch.find((e) => e.id.slice(0, 8) === prefix);
-        if (!entry) continue;
-
-        const suggestions: OcgSuggestion[] = v.violations
-          .filter((viol) => typeof viol.ruleIndex === "number")
-          .map((viol) => {
-            const rule = ocgDoc.rules[viol.ruleIndex - 1];
-            if (!rule) return null;
-            return {
-              ruleId: rule.id,
-              ruleText: rule.text,
-              category: rule.category,
-              severity: rule.severity,
-              issue: String(viol.issue || "").trim().slice(0, 500),
-              suggestedDescription: String(viol.suggestedDescription || "").trim().slice(0, 1000),
-              status: "pending" as const,
-            };
-          })
-          .filter((s): s is OcgSuggestion => s !== null);
-
-        if (suggestions.length) {
-          result.set(entry.id, suggestions);
-        }
-      }
+    for (const entry of entries) {
+      const suggestions = await this.checkEntry(entry, ocgDoc);
+      if (suggestions.length) result.set(entry.id, suggestions);
     }
-
     return result;
+  }
+
+  // ─── Stats tracking ────────────────────────────────────────────────────────
+
+  /** Increment violation counts for every rule that fired on a given entry. */
+  recordViolations(clientId: string, suggestions: OcgSuggestion[]): void {
+    const doc = this.docs.get(clientId);
+    if (!doc || !suggestions.length) return;
+    if (!doc.ruleStats) doc.ruleStats = {};
+    for (const s of suggestions) {
+      const stat = doc.ruleStats[s.ruleId] ?? { violations: 0, accepted: 0, dismissed: 0 };
+      stat.violations++;
+      doc.ruleStats[s.ruleId] = stat;
+    }
+    this.persist().catch((err) => logger.warn("Failed to persist OCG stats", { error: (err as Error).message }));
+  }
+
+  /** Record that a correction suggestion was accepted or dismissed by a lawyer. */
+  recordOutcome(clientId: string, ruleId: string, outcome: "accepted" | "dismissed"): void {
+    const doc = this.docs.get(clientId);
+    if (!doc) return;
+    if (!doc.ruleStats) doc.ruleStats = {};
+    const stat = doc.ruleStats[ruleId] ?? { violations: 0, accepted: 0, dismissed: 0 };
+    if (outcome === "accepted") stat.accepted++;
+    else stat.dismissed++;
+    doc.ruleStats[ruleId] = stat;
+    this.persist().catch((err) => logger.warn("Failed to persist OCG stats", { error: (err as Error).message }));
+  }
+
+  /**
+   * Per-rule violation and correction-acceptance stats for a client's OCG.
+   * Sorted by violation count descending — highest-friction rules first.
+   * acceptanceRate = accepted / (accepted + dismissed); null if no decisions yet.
+   */
+  getStats(clientId: string): {
+    totalRules: number;
+    ruleStats: Array<OcgRuleStat & {
+      ruleId: string;
+      category: OcgRuleCategory;
+      text: string;
+      severity: "hard" | "soft";
+      acceptanceRate: number | null;
+    }>;
+  } | null {
+    const doc = this.docs.get(clientId);
+    if (!doc) return null;
+    const raw = doc.ruleStats ?? {};
+    return {
+      totalRules: doc.rules.length,
+      ruleStats: doc.rules
+        .map((r) => {
+          const s: OcgRuleStat = raw[r.id] ?? { violations: 0, accepted: 0, dismissed: 0 };
+          const decided = s.accepted + s.dismissed;
+          return {
+            ruleId: r.id,
+            category: r.category,
+            text: r.text,
+            severity: r.severity,
+            violations: s.violations,
+            accepted: s.accepted,
+            dismissed: s.dismissed,
+            acceptanceRate: decided > 0 ? s.accepted / decided : null,
+          };
+        })
+        .sort((a, b) => b.violations - a.violations),
+    };
   }
 
   /** Atomic write — tmp file then rename. */

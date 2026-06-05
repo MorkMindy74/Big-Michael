@@ -581,6 +581,12 @@ export interface OcgRule {
   severity: "hard" | "soft";  // hard = will reject billing; soft = style pref
 }
 
+export interface OcgRuleStat {
+  violations: number;   // times this rule was flagged across all entries
+  accepted: number;     // times a suggestion for this rule was accepted
+  dismissed: number;    // times a suggestion was dismissed
+}
+
 export interface OcgDocument {
   id: string;
   clientId: string;
@@ -589,6 +595,8 @@ export interface OcgDocument {
   excerpt: string;    // first 500 chars of source text for display
   createdAt: Date;
   updatedAt: Date;
+  /** Per-rule violation and correction-acceptance counts. Keyed by ruleId. */
+  ruleStats?: Record<string, OcgRuleStat>;
 }
 
 export interface OcgSuggestion {

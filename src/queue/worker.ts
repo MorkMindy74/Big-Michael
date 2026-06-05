@@ -10,13 +10,27 @@
  *
  * `startWorker(orchestrator)` returns a stop function. Call it on shutdown.
  *
- * Handlers:
- *   summarize_time_entry — Haiku generates an OCG-compliant description from
- *                          scratch, using full task findings + OCG rules as
- *                          context. Writes the result directly back to the
- *                          TimeEntry, replacing any placeholder description.
- *   ocg_bulk_check       — Enqueues a summarize_time_entry job for every
- *                          unsummarized closed entry belonging to a client.
+ * summarize_time_entry — Two separate passes per entry:
+ *
+ *   Pass 1 — Description generation (Haiku):
+ *     Haiku writes what happened from task findings. OCG rules ARE injected
+ *     as context so the model can take a best-effort pass at compliance.
+ *     This is guidance only — not a guarantee.
+ *
+ *   Pass 2 — Structured OCG compliance check (OcgStore.checkEntry):
+ *     The generated description is checked rule-by-rule against the client's
+ *     OcgRule dictionary. Rules are evaluated as structured objects:
+ *       - billing_increments / timing → mechanical (pure math, no AI)
+ *       - all other categories       → Haiku, rules passed as JSON objects
+ *                                      {id, category, text, severity}
+ *     Violations map back to specific ruleIds. Stored as OcgSuggestion[].
+ *     Hit counts recorded to ocgStore.recordViolations() for stats tracking.
+ *
+ *   These passes are intentionally separate: the description AI describes
+ *   the work; the compliance checker enforces the rule dictionary.
+ *
+ * ocg_bulk_check — Enqueues a summarize_time_entry job for every unsummarized
+ *                  closed entry belonging to a client.
  */
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -26,6 +40,7 @@ import { Config } from "../config.js";
 import { logger } from "../logger.js";
 import { costStore, calcCostUsd } from "../cost/index.js";
 import type { Orchestrator } from "../orchestrator.js";
+import type { OcgDocument } from "../types.js";
 
 const HAIKU_MODEL = "claude-haiku-4-5-20251001";
 
@@ -43,7 +58,7 @@ async function handleSummarizeTimeEntry(
     return;
   }
 
-  // Collect task findings for context — what work was actually done.
+  // Collect task findings — what work was actually done.
   const task = taskId ? orch.getTask(taskId) : null;
   const findingsSummary = task?.findings?.length
     ? task.findings
@@ -52,25 +67,31 @@ async function handleSummarizeTimeEntry(
         .join("\n")
     : "(no task findings available)";
 
-  // Pull OCG billing rules for this client, if any exist.
-  let ocgSection = "";
+  // Resolve client + OCG document once (used in both passes).
+  let ocgDoc: OcgDocument | undefined;
+  let clientId: string | undefined;
   if (clientNumber) {
     const client = orch.clients.list().find((c) => c.clientNumber === clientNumber);
     if (client) {
-      const ocgDoc = orch.ocg.getByClient(client.id);
-      if (ocgDoc?.rules.length) {
-        ocgSection = `\nOCG BILLING RULES (all hard rules are mandatory):\n${
-          ocgDoc.rules
-            .map((r) => `- [${r.severity.toUpperCase()}/${r.category}] ${r.text}`)
-            .join("\n")
-        }`;
-      }
+      clientId = client.id;
+      ocgDoc = orch.ocg.getByClient(client.id);
     }
   }
 
   const durationHours = (entry.durationMs / 3_600_000).toFixed(2);
 
-  const prompt = `You are a legal billing specialist. Write a precise, compliant billable time entry description.
+  // Build OCG hint block — injected as best-effort context for the description
+  // model. The structured compliance check (Pass 2) is the authoritative gate.
+  const ocgHint = ocgDoc?.rules.length
+    ? `\nOCG GUIDANCE (attempt to comply; a separate check will enforce rules):\n${
+        ocgDoc.rules
+          .map((r) => `- [${r.severity.toUpperCase()}/${r.category}] ${r.text}`)
+          .join("\n")
+      }`
+    : "";
+
+  // ── Pass 1: Description generation ───────────────────────────────────────
+  const descriptionPrompt = `You are a legal billing specialist. Write a precise billable time entry description.
 
 TIMEKEEPER: ${entry.profileName}
 EVENT TYPE: ${entry.event}
@@ -80,14 +101,13 @@ ORIGINAL NOTE: ${entry.description || "(none)"}
 
 WORK PERFORMED (task findings):
 ${findingsSummary}
-${ocgSection}
+${ocgHint}
 
 INSTRUCTIONS:
-1. Write one concise description (1–3 sentences, max 200 characters) of the billable work.
+1. Write one concise description (1–3 sentences, max 200 characters) of the work performed.
 2. Use active voice and specific legal terminology.
-3. Comply strictly with every OCG hard rule listed above (if any).
-4. Do NOT include duration, billing codes, rates, or timestamps — description only.
-5. Return ONLY the description text. No JSON, no quotes, no preamble.`;
+3. Do NOT include duration, billing codes, rates, or timestamps.
+4. Return ONLY the description text. No JSON, no quotes, no preamble.`;
 
   const anthropic = new Anthropic({ apiKey: Config.anthropic.apiKey });
   const t0 = Date.now();
@@ -96,17 +116,15 @@ INSTRUCTIONS:
     const response = await anthropic.messages.create({
       model: HAIKU_MODEL,
       max_tokens: 512,
-      messages: [{ role: "user", content: prompt }],
+      messages: [{ role: "user", content: descriptionPrompt }],
     });
     const durationMs = Date.now() - t0;
-    const inputTokens = response.usage.input_tokens;
-    const outputTokens = response.usage.output_tokens;
     costStore.record({
       model: HAIKU_MODEL,
       provider: "anthropic",
-      inputTokens,
-      outputTokens,
-      costUsd: calcCostUsd(HAIKU_MODEL, inputTokens, outputTokens),
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+      costUsd: calcCostUsd(HAIKU_MODEL, response.usage.input_tokens, response.usage.output_tokens),
       estimatedWh: null,
       estimatedWatts: null,
       durationMs,
@@ -115,7 +133,7 @@ INSTRUCTIONS:
     });
     generated = response.content[0].type === "text" ? response.content[0].text.trim() : "";
   } catch (err) {
-    throw new Error(`Haiku summarize call failed: ${(err as Error).message}`);
+    throw new Error(`Haiku describe call failed: ${(err as Error).message}`);
   }
 
   if (!generated) {
@@ -125,6 +143,43 @@ INSTRUCTIONS:
 
   orch.time.updateDescription(entryId, generated.slice(0, 500));
   logger.info("Time entry description generated", { entryId, chars: generated.length });
+
+  // ── Pass 2: Structured OCG compliance check ───────────────────────────────
+  // Runs independently of Pass 1. Checks the written description against each
+  // OcgRule object — mechanical rules by math, semantic rules via Haiku with
+  // rules passed as structured JSON objects keyed by their IDs.
+  if (!ocgDoc || !clientId) return;
+
+  // Re-fetch so the updated description is present for the check.
+  const updatedEntry = orch.time.getById(entryId);
+  if (!updatedEntry) return;
+
+  try {
+    const suggestions = await orch.ocg.checkEntry(updatedEntry, ocgDoc);
+
+    if (suggestions.length) {
+      orch.time.setSuggestions(entryId, suggestions);
+      orch.ocg.recordViolations(clientId, suggestions);
+      logger.info("OCG violations found", {
+        entryId,
+        clientNumber,
+        total: suggestions.length,
+        hard: suggestions.filter((s) => s.severity === "hard").length,
+        byCategory: suggestions.reduce<Record<string, number>>((acc, s) => {
+          acc[s.category] = (acc[s.category] ?? 0) + 1;
+          return acc;
+        }, {}),
+      });
+    } else {
+      logger.debug("OCG check passed — no violations", { entryId });
+    }
+  } catch (err) {
+    // OCG check failure is non-fatal — description is already written.
+    logger.warn("OCG compliance check error (non-fatal)", {
+      entryId,
+      error: (err as Error).message,
+    });
+  }
 }
 
 async function handleOcgBulkCheck(
@@ -133,7 +188,6 @@ async function handleOcgBulkCheck(
 ): Promise<void> {
   const { clientNumber } = payload;
 
-  // Only closed entries that haven't been summarized yet.
   const entries = orch.time
     .list({ clientNumber })
     .filter((e) => e.endedAt && !e.ocgSuggestions);

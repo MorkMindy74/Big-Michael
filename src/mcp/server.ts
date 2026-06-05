@@ -1241,6 +1241,11 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
 
     const updated = orchestrator.time.acceptSuggestion(id, ruleId);
     if (!updated) return reply.status(404).send({ error: "Suggestion not found" });
+    // Track acceptance for per-rule hit rate stats.
+    if (entry.clientNumber) {
+      const client = orchestrator.clients.list().find((c) => c.clientNumber === entry.clientNumber);
+      if (client) ocgStore.recordOutcome(client.id, ruleId, "accepted");
+    }
     return updated;
   });
 
@@ -1260,7 +1265,29 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
 
     const updated = orchestrator.time.dismissSuggestion(id, ruleId);
     if (!updated) return reply.status(404).send({ error: "Suggestion not found" });
+    // Track dismissal for per-rule hit rate stats.
+    if (entry.clientNumber) {
+      const client = orchestrator.clients.list().find((c) => c.clientNumber === entry.clientNumber);
+      if (client) ocgStore.recordOutcome(client.id, ruleId, "dismissed");
+    }
     return updated;
+  });
+
+  /**
+   * GET /clients/:id/ocg/stats
+   *
+   * Per-rule violation counts and correction-acceptance rates for a client's OCG.
+   * Sorted by violation frequency — shows which rules cause the most friction.
+   * Partner only.
+   */
+  app.get("/clients/:id/ocg/stats", async (req, reply) => {
+    if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
+    const { id } = req.params as { id: string };
+    const client = orchestrator.clients.get(id);
+    if (!client) return reply.status(404).send({ error: "Client not found" });
+    const stats = ocgStore.getStats(id);
+    if (!stats) return reply.status(404).send({ error: "No OCG document for this client" });
+    return stats;
   });
 
   // ── NOSLEGAL analytics ────────────────────────────────────────────────────────

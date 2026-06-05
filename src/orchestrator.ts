@@ -53,6 +53,7 @@ import { detectNosLegal } from "./services/classifier.js";
 import { costStore, calcCostUsd, calcWattHours } from "./cost/index.js";
 import { jobQueue } from "./queue/index.js";
 import { isOllamaModel, isLocalModel } from "./providers/index.js";
+import { BudgetMonitor } from "./budget/index.js";
 import type {
   Task,
   WorkflowType,
@@ -125,6 +126,7 @@ export class Orchestrator {
   readonly clients: ClientStore;
   readonly time: TimeStore;
   readonly ocg: OcgStore;
+  readonly budgetMonitor: BudgetMonitor;
 
   private readonly tasks: Map<string, Task> = new Map();
   private readonly gateEmitter = new EventEmitter();
@@ -142,6 +144,7 @@ export class Orchestrator {
     this.clients = new ClientStore();
     this.time = new TimeStore();
     this.ocg = new OcgStore();
+    this.budgetMonitor = new BudgetMonitor(this.time, this.clients);
   }
 
   async init(): Promise<void> {

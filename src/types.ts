@@ -311,7 +311,7 @@ export interface TimeEntry {
   durationMs: number;
   /** 6-minute billing increments (0.1 hr each). Rounded UP. 0 while running. */
   billingUnits: number;
-  /** USD/hour rate captured at the time the entry is created (agent_work only). */
+  /** USD/hour rate captured at the time the entry is created. */
   billingRate?: number;
   /** Pre-computed fee: billingUnits × 0.1 × billingRate. Set on close. */
   billingAmountUsd?: number;
@@ -481,6 +481,19 @@ export interface ClientMatter {
   description: string;
   practiceArea?: string;
   openedAt: Date;
+  budgetUsd?: number;
+  budgetAlertThresholds?: number[];
+  budgetAlertsTriggered?: number[];
+}
+
+export interface BudgetAlert {
+  matterNumber: string;
+  clientNumber: string;
+  budgetUsd: number;
+  burnUsd: number;
+  burnPct: number;
+  threshold: number;
+  triggeredAt: string;
 }
 
 export interface Client {

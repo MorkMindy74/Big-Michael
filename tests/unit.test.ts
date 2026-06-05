@@ -561,8 +561,10 @@ test("TimeStore: exportCsv() includes header row", () => {
   const csv = store.exportCsv();
   const lines = csv.split(/\r?\n/);
   assert.ok(lines.length >= 2, "CSV should have header + at least one data row");
-  assert.ok(lines[0].startsWith("id,profileId,profileName"), `Header row was: ${lines[0]}`);
+  assert.ok(lines[0].startsWith("id,event,profileId,profileName"), `Header row was: ${lines[0]}`);
   assert.ok(lines[0].includes("billingUnits"), "Header must include billingUnits");
+  assert.ok(lines[0].includes("utbmsTaskCode"), "Header must include utbmsTaskCode");
+  assert.ok(lines[0].includes("utbmsActivityCode"), "Header must include utbmsActivityCode");
 });
 
 test("detectNosLegal: returns empty object on LLM/provider failure", async () => {

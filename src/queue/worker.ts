@@ -38,6 +38,7 @@ import { jobQueue } from "./index.js";
 import type { SummarizeTimeEntryPayload, OcgBulkCheckPayload } from "./index.js";
 import { Config } from "../config.js";
 import { logger } from "../logger.js";
+import { auditLogger } from "../audit/index.js";
 import { costStore, calcCostUsd } from "../cost/index.js";
 import type { Orchestrator } from "../orchestrator.js";
 import type { OcgDocument } from "../types.js";
@@ -227,6 +228,7 @@ export function startWorker(orch: Orchestrator): () => void {
 
       promises.push(
         (async () => {
+          const jobStart = Date.now();
           try {
             switch (job.type) {
               case "summarize_time_entry":
@@ -245,10 +247,21 @@ export function startWorker(orch: Orchestrator): () => void {
                 logger.warn("Unknown job type — skipping", { type: job.type, jobId: job.id });
             }
             await jobQueue.ack(job.id);
+            auditLogger.write({
+              event: "job.completed",
+              durationMs: Date.now() - jobStart,
+              data: { jobId: job.id, type: job.type, retries: job.retries },
+            });
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             logger.warn("Job failed", { jobId: job.id, type: job.type, error: msg });
             await jobQueue.fail(job.id, msg);
+            const isDead = job.retries + 1 >= job.maxRetries;
+            auditLogger.write({
+              event: isDead ? "job.dead_letter" : "job.failed",
+              durationMs: Date.now() - jobStart,
+              data: { jobId: job.id, type: job.type, retries: job.retries + 1, error: msg },
+            });
           }
         })(),
       );

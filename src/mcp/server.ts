@@ -452,6 +452,11 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     const suggestedLawyers = practiceArea
       ? orchestrator.profiles.list().filter((p) => p.practiceAreas?.includes(practiceArea))
       : [];
+    auditLogger.write({
+      event: "document.ingested",
+      actorId: getUser(req)?.profileId,
+      data: { docId, title: body.title, practiceArea, detectedClientNumber: detectedClient?.clientNumber },
+    });
     return reply.status(201).send({
       id: docId,
       practiceArea,
@@ -504,6 +509,11 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     const suggestedLawyers = practiceArea
       ? orchestrator.profiles.list().filter((p) => p.practiceAreas?.includes(practiceArea))
       : [];
+    auditLogger.write({
+      event: "document.uploaded",
+      actorId: getUser(req)?.profileId,
+      data: { docId: id, title, filename, practiceArea, detectedClientNumber: detectedClient?.clientNumber },
+    });
     return reply.status(201).send({
       id, title, practiceArea, detectedClient,
       suggestedLawyers: suggestedLawyers.map((p) => ({ id: p.id, name: p.name, email: p.email })),
@@ -638,10 +648,16 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
   app.post("/profiles", async (req, reply) => {
     if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
     try {
-      return reply.status(201).send(await orchestrator.profiles.create(req.body as {
+      const profile = await orchestrator.profiles.create(req.body as {
         name: string; email: string; role?: string; title?: string; color?: string;
         practiceAreas?: string[]; bio?: string;
-      }));
+      });
+      auditLogger.write({
+        event: "profile.created",
+        actorId: getUser(req)?.profileId,
+        data: { profileId: profile.id, email: profile.email, role: profile.role },
+      });
+      return reply.status(201).send(profile);
     } catch (err) {
       return reply.status(400).send({ error: (err as Error).message });
     }
@@ -663,7 +679,13 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
       return reply.status(403).send({ error: "Partner role required to set user mode" });
     }
     try {
-      return await orchestrator.profiles.update(id, patch as Record<string, never>);
+      const updated = await orchestrator.profiles.update(id, patch as Record<string, never>);
+      auditLogger.write({
+        event: "profile.updated",
+        actorId: user?.profileId,
+        data: { profileId: id, fields: Object.keys(patch) },
+      });
+      return updated;
     } catch (err) {
       return reply.status(404).send({ error: (err as Error).message });
     }
@@ -674,6 +696,13 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     const { id } = req.params as { id: string };
     try {
       const ok = await orchestrator.profiles.remove(id);
+      if (ok) {
+        auditLogger.write({
+          event: "profile.deleted",
+          actorId: getUser(req)?.profileId,
+          data: { profileId: id },
+        });
+      }
       return ok ? reply.status(200).send({ ok: true }) : reply.status(404).send({ error: "Profile not found" });
     } catch (err) {
       return reply.status(400).send({ error: (err as Error).message });
@@ -820,6 +849,11 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
       const body = req.body as { name: string; clientNumber: string; adversaries?: string[]; notes?: string };
       const conflict = orchestrator.clients.checkConflict(body.name);
       const client = await orchestrator.clients.create(body);
+      auditLogger.write({
+        event: "client.created",
+        actorId: getUser(req)?.profileId,
+        data: { clientId: client.id, clientNumber: client.clientNumber, name: client.name },
+      });
       return reply.status(201).send({ ...client, conflict });
     } catch (err) {
       return reply.status(400).send({ error: (err as Error).message });
@@ -830,7 +864,13 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
     const { id } = req.params as { id: string };
     try {
-      return await orchestrator.clients.update(id, req.body as Record<string, never>);
+      const updated = await orchestrator.clients.update(id, req.body as Record<string, never>);
+      auditLogger.write({
+        event: "client.updated",
+        actorId: getUser(req)?.profileId,
+        data: { clientId: id, fields: Object.keys(req.body as object) },
+      });
+      return updated;
     } catch (err) {
       return reply.status(404).send({ error: (err as Error).message });
     }
@@ -841,6 +881,13 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     const { id } = req.params as { id: string };
     try {
       const ok = await orchestrator.clients.remove(id);
+      if (ok) {
+        auditLogger.write({
+          event: "client.deleted",
+          actorId: getUser(req)?.profileId,
+          data: { clientId: id },
+        });
+      }
       return ok ? reply.status(200).send({ ok: true }) : reply.status(404).send({ error: "Client not found" });
     } catch (err) {
       return reply.status(400).send({ error: (err as Error).message });
@@ -853,6 +900,11 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     try {
       const body = req.body as { matterNumber: string; description: string; practiceArea?: string };
       const matter = await orchestrator.clients.addMatter(id, body);
+      auditLogger.write({
+        event: "matter.added",
+        actorId: getUser(req)?.profileId,
+        data: { clientId: id, matterNumber: matter.matterNumber, practiceArea: matter.practiceArea },
+      });
       return reply.status(201).send(matter);
     } catch (err) {
       return reply.status(400).send({ error: (err as Error).message });
@@ -864,6 +916,13 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     const { id, matterNumber } = req.params as { id: string; matterNumber: string };
     try {
       const ok = await orchestrator.clients.removeMatter(id, matterNumber);
+      if (ok) {
+        auditLogger.write({
+          event: "matter.removed",
+          actorId: getUser(req)?.profileId,
+          data: { clientId: id, matterNumber },
+        });
+      }
       return ok ? reply.status(200).send({ ok: true }) : reply.status(404).send({ error: "Matter not found" });
     } catch (err) {
       return reply.status(400).send({ error: (err as Error).message });
@@ -1022,6 +1081,11 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
     try {
       const updated = await orchestrator.settings.update(req.body as Record<string, unknown>);
+      auditLogger.write({
+        event: "settings.updated",
+        actorId: getUser(req)?.profileId,
+        data: { fields: Object.keys(req.body as object) },
+      });
       return updated;
     } catch (err) {
       return reply.code(400).send({ error: (err as Error).message });

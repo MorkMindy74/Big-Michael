@@ -194,6 +194,29 @@ export const Config = {
   audit: {
     enabled: optional("AUDIT_ENABLED", "true") === "true",
     logFile: optional("AUDIT_LOG_FILE", "./audit.jsonl"),
+    // ── OpenSearch sink (self-hosted, recommended) ──────────────────────────
+    // Set AUDIT_OPENSEARCH_URL to activate. API key is optional (basic auth).
+    opensearch: {
+      url: process.env.AUDIT_OPENSEARCH_URL ?? "",
+      apiKey: process.env.AUDIT_OPENSEARCH_API_KEY ?? "",
+      enabled: Boolean(process.env.AUDIT_OPENSEARCH_URL),
+    },
+    // ── Splunk HEC sink ─────────────────────────────────────────────────────
+    // Set both URL and token to activate.
+    splunk: {
+      url: process.env.AUDIT_SPLUNK_HEC_URL ?? "",
+      token: process.env.AUDIT_SPLUNK_HEC_TOKEN ?? "",
+      index: process.env.AUDIT_SPLUNK_INDEX ?? "",
+      enabled: Boolean(process.env.AUDIT_SPLUNK_HEC_URL && process.env.AUDIT_SPLUNK_HEC_TOKEN),
+    },
+    // ── Generic webhook sink ────────────────────────────────────────────────
+    // Set AUDIT_WEBHOOK_URL to activate. Bearer token is optional.
+    // Works with: Datadog Logs API, Azure Monitor, custom SIEMs.
+    webhook: {
+      url: process.env.AUDIT_WEBHOOK_URL ?? "",
+      token: process.env.AUDIT_WEBHOOK_TOKEN ?? "",
+      enabled: Boolean(process.env.AUDIT_WEBHOOK_URL),
+    },
   },
 
   // DocuSeal — open-source e-signature (https://www.docuseal.com)

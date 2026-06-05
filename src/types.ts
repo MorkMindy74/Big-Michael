@@ -748,3 +748,15 @@ export interface RegulationAlert {
   detectedAt: string;
   source: "tavily";
 }
+
+// ── Status reports ──────────────────────────────────────────────────────────
+export interface StatusReport {
+  taskId: string;
+  matterNumber?: string;
+  clientNumber?: string;
+  generatedAt: string;
+  format: "html" | "markdown";
+  content: string;
+  wordCount: number;
+  costUsd: number;
+}

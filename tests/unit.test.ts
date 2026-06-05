@@ -27,6 +27,7 @@ import { ClioClient, clioClient } from "../src/integrations/clio.js";
 import { CLIO_TOOLS, CLIO_TOOL_NAMES } from "../src/tools/clio.js";
 import { validateSinkUrl } from "../src/audit/sinks/utils.js";
 import { exportLedes1998B } from "../src/billing/ledes.js";
+import { markdownToHtml } from "../src/reports/status.js";
 
 // ─── Model routing: complexity heuristic ────────────────────────────────────
 
@@ -1011,4 +1012,42 @@ test("RegPulseMonitor: respects per-matter cooldown", async () => {
   } as unknown as Task;
   const alerts = await monitor.checkMatter(task);
   assert.equal(alerts.length, 0, "should skip matter within cooldown window");
+});
+
+// ─── Status report: markdownToHtml helper ─────────────────────────────────────
+
+test("markdownToHtml: ## Heading → contains <h2>", () => {
+  const html = markdownToHtml("## Summary");
+  assert.ok(html.includes("<h2>"), `Expected <h2> in output but got: ${html}`);
+  assert.ok(html.includes("Summary"), "Heading text should be preserved");
+});
+
+test("markdownToHtml: **bold** → contains <strong>", () => {
+  const html = markdownToHtml("This is **important** text.");
+  assert.ok(html.includes("<strong>"), `Expected <strong> in output but got: ${html}`);
+  assert.ok(html.includes("important"), "Bold text should be preserved");
+});
+
+test("markdownToHtml: - item → contains <li>", () => {
+  const html = markdownToHtml("- First item\n- Second item");
+  assert.ok(html.includes("<li>"), `Expected <li> in output but got: ${html}`);
+  assert.ok(html.includes("First item"), "List item text should be preserved");
+});
+
+test("markdownToHtml: ### Heading → contains <h3>", () => {
+  const html = markdownToHtml("### Sub-section");
+  assert.ok(html.includes("<h3>"), `Expected <h3> in output but got: ${html}`);
+});
+
+test("markdownToHtml: plain text → wrapped in <p>", () => {
+  const html = markdownToHtml("Hello world.");
+  assert.ok(html.includes("<p>"), `Expected <p> in output but got: ${html}`);
+  assert.ok(html.includes("Hello world."), "Paragraph text should be preserved");
+});
+
+test("markdownToHtml: HTML special chars are escaped", () => {
+  const html = markdownToHtml("This is <b>not</b> HTML & raw.");
+  assert.ok(!html.includes("<b>"), "Raw <b> must be escaped");
+  assert.ok(html.includes("&lt;b&gt;"), "< and > must be escaped to &lt;&gt;");
+  assert.ok(html.includes("&amp;"), "& must be escaped to &amp;");
 });

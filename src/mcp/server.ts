@@ -52,6 +52,8 @@ import { analyzeClientVoice } from "../services/clientVoiceAnalyzer.js";
 import { jobQueue } from "../queue/index.js";
 import { startWorker } from "../queue/worker.js";
 import { exportLedes1998B } from "../billing/ledes.js";
+import { generateStatusReport } from "../reports/status.js";
+import type { StatusReportOptions } from "../reports/status.js";
 
 // ─── Tool schemas ─────────────────────────────────────────────────────────────
 
@@ -1196,6 +1198,51 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     const tasks = orchestrator.listTasks();
     const alerts = await orchestrator.regPulse.checkAll(tasks);
     return { checked: tasks.length, alerts };
+  });
+
+  // ── Client status reports ─────────────────────────────────────────────────────
+
+  app.post("/tasks/:id/status-report", async (req, reply) => {
+    const user = getUser(req);
+    const { id } = req.params as { id: string };
+    const task = orchestrator.getTask(id);
+    if (!task) return reply.status(404).send({ error: "Task not found" });
+    if (!canViewTask(user, task)) return reply.status(403).send({ error: "Access denied" });
+    const {
+      format = "markdown",
+      includeTimeEntries = true,
+      includeBudgetBurn = true,
+      includeOcgFlags = false,
+      customNote,
+    } = (req.body ?? {}) as Partial<StatusReportOptions>;
+    if (format !== "html" && format !== "markdown") return reply.status(400).send({ error: "format must be html or markdown" });
+
+    const timeEntries = includeTimeEntries
+      ? orchestrator.time.list({ taskId: id })
+      : [];
+
+    // Resolve budget burn via budgetMonitor if available on the orchestrator
+    const budgetBurn = includeBudgetBurn && task.matterNumber && orchestrator.budgetMonitor
+      ? orchestrator.budgetMonitor.getBurn(task.matterNumber)
+      : null;
+
+    // Resolve the submitting lawyer's tone profile if available
+    const assignedId = task.assignedLawyerIds?.[0] ?? task.createdByProfileId;
+    const profile = assignedId ? orchestrator.profiles.get(assignedId) : null;
+
+    const report = await generateStatusReport(
+      task,
+      timeEntries,
+      budgetBurn ?? undefined,
+      { taskId: id, format, includeTimeEntries, includeBudgetBurn, includeOcgFlags, customNote },
+      profile ?? undefined,
+    );
+
+    if (format === "html") {
+      reply.header("Content-Type", "text/html; charset=utf-8");
+      return reply.send(report.content);
+    }
+    return report;
   });
 
   // ── Admin settings (presentation mode, DyTopo depth, debate, DocuSeal) ──────

@@ -53,13 +53,29 @@ if ! command -v git &>/dev/null; then
   if [[ "$OS" == "Darwin" ]]; then
     note "Install Xcode Command Line Tools: xcode-select --install"
     note "Then re-run this script."
+    exit 1
   elif command -v apt-get &>/dev/null; then
     info "Installing git via apt..."
-    sudo apt-get update -qq && sudo apt-get install -y -qq git
+    # Use passwordless sudo (-n) so we don't hang when stdin is piped
+    if sudo -n true 2>/dev/null; then
+      sudo apt-get update -qq && sudo apt-get install -y -qq git
+    elif [[ "$(id -u)" == "0" ]]; then
+      apt-get update -qq && apt-get install -y -qq git
+    else
+      fail "Need sudo to install git. Run: sudo apt-get install git  then re-run this script."
+      exit 1
+    fi
     ok "git installed."
   elif command -v yum &>/dev/null; then
     info "Installing git via yum..."
-    sudo yum install -y -q git
+    if sudo -n true 2>/dev/null; then
+      sudo yum install -y -q git
+    elif [[ "$(id -u)" == "0" ]]; then
+      yum install -y -q git
+    else
+      fail "Need sudo to install git. Run: sudo yum install git  then re-run this script."
+      exit 1
+    fi
     ok "git installed."
   else
     echo "  Please install git and re-run this script."
@@ -148,8 +164,15 @@ echo -e "  ${BOLD}${CYAN}▸${R} ${BOLD}Repository${R}"
 echo -e "  ${GRAY}────────────────────────────────────────────────────────────${R}"
 
 # Detect if we're already inside the repo (script run from within clone)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || pwd)"
-if [[ -f "$SCRIPT_DIR/package.json" ]] && grep -q '"name": "big-michael"' "$SCRIPT_DIR/package.json" 2>/dev/null; then
+# When piped via curl|bash, BASH_SOURCE[0] is empty — treat as "not in repo"
+SCRIPT_DIR=""
+if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != "bash" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+fi
+
+if [[ -n "$SCRIPT_DIR" ]] \
+    && [[ -f "$SCRIPT_DIR/package.json" ]] \
+    && grep -q '"name": "big-michael"' "$SCRIPT_DIR/package.json" 2>/dev/null; then
   REPO_DIR="$SCRIPT_DIR"
   ok "Already in repo at ${REPO_DIR}"
 elif [[ -d "$INSTALL_DIR/.git" ]]; then
@@ -174,7 +197,11 @@ cd "$REPO_DIR"
 
 info "npm install (this takes ~30 seconds on first run)..."
 npm install --prefer-offline --no-audit --no-fund --loglevel=error 2>&1 \
-  | grep -v "^npm warn" || true
+  | grep -v "^npm warn"; _npm_exit="${PIPESTATUS[0]}"
+if (( _npm_exit != 0 )); then
+  fail "npm install failed (exit ${_npm_exit}). Check the output above."
+  exit 1
+fi
 ok "Dependencies ready."
 
 # ── Python deps (optional) ────────────────────────────────────────────────
@@ -198,5 +225,7 @@ echo -e "  ${BOLD}${CYAN}▸${R} ${BOLD}Launching Setup Wizard${R}"
 echo -e "  ${GRAY}────────────────────────────────────────────────────────────${R}"
 nl
 
-# Use npx so tsx works even if the local install failed
+# Signal to the wizard that npm install is already done (avoids double-install prompt)
+export BIG_MICHAEL_SETUP_BOOTSTRAPPED=1
+
 exec npm run setup

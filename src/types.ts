@@ -546,6 +546,41 @@ export interface SearchResult {
   excerpt: string;
 }
 
+// ─── Pre-bill review ─────────────────────────────────────────────────────────
+
+export type PreBillStatus = "draft" | "reviewed" | "approved" | "invoiced";
+
+export interface PreBillEntry {
+  entryId: string;
+  description: string;
+  billingUnits: number;
+  billingRate?: number;
+  billingAmountUsd?: number;
+  utbmsTaskCode?: string;
+  utbmsActivityCode?: string;
+  profileName?: string;
+  agentName?: string;
+  startedAt: string;
+  endedAt?: string;
+  ocgSuggestionCount: number;
+}
+
+export interface PreBill {
+  id: string;
+  matterNumber: string;
+  clientNumber?: string;
+  status: PreBillStatus;
+  createdByProfileId: string;
+  createdAt: string;
+  reviewedAt?: string;
+  approvedAt?: string;
+  invoicedAt?: string;
+  entries: PreBillEntry[];
+  totalBillingUnits: number;
+  totalAmountUsd: number;
+  notes?: string;
+}
+
 // ─── Embeddings ──────────────────────────────────────────────────────────────
 
 export interface EmbeddingResult {

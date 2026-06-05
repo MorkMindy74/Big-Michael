@@ -34,6 +34,7 @@ import { ProfileStore } from "./auth/index.js";
 import { ClientStore } from "./clients/index.js";
 import { TimeStore } from "./time/index.js";
 import { OcgStore } from "./ocg/index.js";
+import { PreBillStore } from "./billing/prebill.js";
 import { agentLearning } from "./learning/index.js";
 import { DyTopoEngine } from "./dytopo/engine.js";
 import type { AgentBillingCtx } from "./dytopo/engine.js";
@@ -127,6 +128,7 @@ export class Orchestrator {
   readonly time: TimeStore;
   readonly ocg: OcgStore;
   readonly budgetMonitor: BudgetMonitor;
+  readonly preBills: PreBillStore;
 
   private readonly tasks: Map<string, Task> = new Map();
   private readonly gateEmitter = new EventEmitter();
@@ -145,6 +147,7 @@ export class Orchestrator {
     this.time = new TimeStore();
     this.ocg = new OcgStore();
     this.budgetMonitor = new BudgetMonitor(this.time, this.clients);
+    this.preBills = new PreBillStore(Config.persistence.preBillsFile);
   }
 
   async init(): Promise<void> {
@@ -154,6 +157,7 @@ export class Orchestrator {
     await this.clients.init();
     await this.time.init();
     await this.ocg.init();
+    await this.preBills.init();
     await agentLearning.init();
     await Promise.all([
       this.registry.init(),

@@ -1432,6 +1432,63 @@ export async function startRestApi(orchestrator: Orchestrator): Promise<void> {
     return stats;
   });
 
+  // ── Pre-bill review workflow ──────────────────────────────────────────────────
+
+  app.post("/pre-bills", async (req, reply) => {
+    if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
+    const { matterNumber, clientNumber, from, to } = req.body as {
+      matterNumber: string; clientNumber?: string; from?: string; to?: string;
+    };
+    if (!matterNumber) return reply.status(400).send({ error: "matterNumber required" });
+    const entries = orchestrator.time.list({
+      matterNumber,
+      clientNumber: clientNumber || undefined,
+      from: from ? new Date(from) : undefined,
+      to: to ? new Date(to) : undefined,
+    }).filter((e) => e.endedAt);
+    if (!entries.length) return reply.status(422).send({ error: "No closed entries found for this matter" });
+    const bill = orchestrator.preBills.create(matterNumber, entries, actorOf(req), clientNumber);
+    return reply.status(201).send(bill);
+  });
+
+  app.get("/pre-bills", async (req, reply) => {
+    if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
+    const { matterNumber } = req.query as Record<string, string>;
+    return orchestrator.preBills.list(matterNumber || undefined);
+  });
+
+  app.get("/pre-bills/:id", async (req, reply) => {
+    if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
+    const { id } = req.params as { id: string };
+    const bill = orchestrator.preBills.getById(id);
+    if (!bill) return reply.status(404).send({ error: "Pre-bill not found" });
+    return bill;
+  });
+
+  app.patch("/pre-bills/:id", async (req, reply) => {
+    if (!isPartner(getUser(req))) return reply.status(403).send({ error: "Partner role required" });
+    const { id } = req.params as { id: string };
+    const body = req.body as {
+      status?: import("../types.js").PreBillStatus;
+      notes?: string;
+      entryEdit?: { entryId: string; description: string };
+    };
+    let bill = orchestrator.preBills.getById(id);
+    if (!bill) return reply.status(404).send({ error: "Pre-bill not found" });
+    if (body.entryEdit) {
+      bill = orchestrator.preBills.updateEntryDescription(id, body.entryEdit.entryId, body.entryEdit.description) ?? bill;
+    }
+    if (body.notes !== undefined) {
+      bill = orchestrator.preBills.setNotes(id, body.notes) ?? bill;
+    }
+    if (body.status) {
+      const updated = orchestrator.preBills.transition(id, body.status);
+      if (!updated) return reply.status(422).send({ error: `Invalid transition from ${bill.status} to ${body.status}` });
+      bill = updated;
+    }
+    return bill;
+  });
+
   // ── NOSLEGAL analytics ────────────────────────────────────────────────────────
   // Aggregates NOSLEGAL facet breakdown across all tasks the caller can see.
   // Partner only — provides firm-wide matter analytics.
